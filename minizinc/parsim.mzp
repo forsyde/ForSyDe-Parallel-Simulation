@@ -1,0 +1,23 @@
+{
+    "builtinSolverConfigs": [
+    ],
+    "openFiles": [
+        "partitioning-heterogeneous.mzn",
+        "partitioning-homogeneous.mzn",
+        "dzn-hetero/partitioning-heterogeneous.dzn",
+        "dzn-homo/partitioning.dzn"
+    ],
+    "openTab": 2,
+    "projectFiles": [
+        "dzn-hetero/partitioning-heterogeneous.dzn",
+        "dzn-homo/partitioning.dzn",
+        "partitioning-heterogeneous.mzn",
+        "partitioning-homogeneous.mzn",
+        "../../parsim-csp/MiniZinc/partitioning-heterogeneous.mzn"
+    ],
+    "projectSolverConfigs": [
+    ],
+    "selectedBuiltinConfigId": "org.google.or-tools",
+    "selectedBuiltinConfigVersion": "7.2",
+    "version": 105
+}

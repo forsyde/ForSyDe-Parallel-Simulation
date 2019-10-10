@@ -1,0 +1,334 @@
+module transformation;
+create OUT : forsyde from IN1 : forsyde, IN2 : XML;
+  
+rule systemToSystem {
+	from 
+		inSys : forsyde!System  
+	to 
+		outSys : forsyde!System  (
+			processNetworks <- Sequence{outPN , inSys.processNetworks -> first().processes -> select ( cp | cp.oclIsTypeOf(forsyde!CompositeProcess))
+										        -> select (cp | thisModule.xml.equalAtts('process',cp.name)->first().attribute('processor').value = thisModule.output.toString())
+												-> collect ( cp | thisModule.resolveTemp(cp, 'outPN'))
+				                       }
+		) 
+		,outPN : forsyde!ProcessNetwork  (
+			name <- inSys.processNetworks->first().name 
+			,processes <-  Sequence{ thisModule.remainedProcesses (inSys.processNetworks->first().processes->select ( p | p.oclIsTypeOf(forsyde!LeafProcess)), thisModule.xml)
+									,thisModule.remainedProcesses (inSys.processNetworks->first().processes->select ( p | p.oclIsTypeOf(forsyde!CompositeProcess)), thisModule.xml) -> collect (cp | thisModule.resolveTemp(cp, 'outCP'))
+								    ,thisModule.receiverCreatingSignals(inSys.processNetworks->first().signals, thisModule.xml) -> collect(s | thisModule.resolveTemp(s , 'outReceiver'))
+									,thisModule.senderCreatingSignals(inSys.processNetworks->first().signals, thisModule.xml) -> collect(s | thisModule.resolveTemp(s , 'outSender'))
+			}
+			,signals <- Sequence { thisModule.remainedSignals(inSys.processNetworks->first().signals, thisModule.xml)
+								   ,thisModule.receiverCreatingSignals(inSys.processNetworks->first().signals, thisModule.xml) -> collect(s | thisModule.resolveTemp(s , 'outSig1'))
+								   ,thisModule.senderCreatingSignals(inSys.processNetworks->first().signals, thisModule.xml) -> collect(s | thisModule.resolveTemp(s , 'outSig1'))
+								 }
+			,ports <- inSys.processNetworks->first().ports	
+		)
+}
+
+rule compositeProcessToCompositeProcessAndProcessNetwork {
+	from 
+		inCP : forsyde!CompositeProcess
+		(
+			thisModule.xml.equalAtts('process',inCP.name)->first().attribute('processor').value = thisModule.output.toString()	
+		)
+	to 
+		outCP : forsyde!CompositeProcess (
+			name <- inCP.name 
+			,ports <- inCP.ports 
+			,component <- outPN
+		)
+		,outPN :forsyde!ProcessNetwork (
+			name <- inCP.component.name 
+			,processes <- inCP.component.processes
+			,ports <- inCP.component.ports
+			,signals <- inCP.component.signals
+		)
+}
+
+
+rule leafProcessToLeafProcess {
+	from 
+		inLP : forsyde!LeafProcess (
+			if  thisModule.xml.equalAtts('process',inLP.name) -> notEmpty() then
+				thisModule.xml.equalAtts('process',inLP.name)->first().attribute('processor').value = thisModule.output.toString() 
+			else
+				thisModule.systemComposites->collect (pr | pr.component.processes)->flatten() -> includes (inLP)
+			endif
+		)
+	to 
+		outLP : forsyde!LeafProcess (
+			name <- inLP.name 
+			,ports <- inLP.ports
+			,processConstructor <- inLP.processConstructor
+			,constructorArguments <- inLP.constructorArguments 	
+		)
+}
+
+
+
+
+rule inputPortToInputPort {
+	from 
+		inIP : forsyde!InputPort (
+			(
+				thisModule.systemLeafs-> collect (pr | pr.ports) -> flatten()
+			).union(
+				thisModule.systemComposites	->collect (cp | cp.component.processes)-> flatten()-> collect (pr | pr.ports) -> flatten()
+			).union(
+				thisModule.systemComposites	->collect (cp | cp.ports) -> flatten()							          	
+	        ) -> includes (inIP)
+		)
+	to 
+		outIP : forsyde!InputPort (
+			name <- inIP.name 
+			,moc <- inIP.moc
+			,dataType <- inIP.dataType 
+			,boundProcess <- inIP.boundProcess
+			,boundPort <- inIP.boundPort	
+		)
+}
+
+rule outputPortToOutputPort {
+	from 
+		inOP : forsyde!OutputPort (
+			(
+				thisModule.systemLeafs-> collect (pr | pr.ports) -> flatten()
+			).union( 
+				thisModule.systemComposites->collect (cp | cp.component.processes)-> flatten() ->collect (pr | pr.ports)  -> flatten()
+			).union(
+				thisModule.systemComposites	->collect (cp | cp.ports) -> flatten()
+			) -> includes (inOP)
+		)
+	to 
+		outOP : forsyde!OutputPort (
+			name <- inOP.name 
+			,moc <- inOP.moc
+			,dataType <- inOP.dataType 
+			,boundProcess <- inOP.boundProcess
+			,boundPort <- inOP.boundPort	
+		)
+}
+
+rule remainedSignalsToSignals {
+	from 
+		inSig : forsyde!Signal 
+		(
+	        if thisModule.xml.equalAtts('process',inSig.sourceProcess.name)->notEmpty()
+			then
+				(thisModule.xml.equalAtts('process',inSig.sourceProcess.name)->first().attribute('processor').value = thisModule.output.toString())
+				and
+	 			(thisModule.xml.equalAtts('process',inSig.targetProcess.name)->first().attribute('processor').value = thisModule.output.toString())
+			else (thisModule.systemComposites -> collect (cp | cp.component) -> flatten() 
+					-> collect (comp | comp.signals) -> flatten()) -> includes(inSig)
+			endif
+		)
+	to 
+		outSig : forsyde!Signal (
+			name <- inSig.name 
+			,moc <- inSig.moc 
+			,dataType <- inSig.dataType
+			,sourceProcess <- inSig.sourceProcess
+			,sourcePort <- inSig.sourcePort
+			,targetProcess <- inSig.targetProcess
+			,targetPort <- inSig.targetPort
+		)
+}
+
+rule senderCreatingSignals {
+	from 
+		inSig : forsyde!Signal 
+		(
+			if thisModule.xml.equalAtts('process',inSig.sourceProcess.name)->notEmpty()
+			then if thisModule.xml.equalAtts('process',inSig.sourceProcess.name)->first().attribute('processor').value = 
+				    thisModule.xml.equalAtts('process',inSig.targetProcess.name)->first().attribute('processor').value 
+				 then false 
+				 else thisModule.xml.equalAtts('process',inSig.sourceProcess.name)->first().attribute('processor').value = thisModule.output.toString()
+				 endif	 	 
+			else false 
+			endif 
+		)
+	to 
+		outSig1 : forsyde!Signal (
+			name <- inSig.name + '_toSender'
+			,moc <- inSig.moc 
+			,dataType <- inSig.dataType
+			,sourceProcess <- inSig.sourceProcess
+			,sourcePort <- inSig.sourcePort
+			,targetProcess <- outSender
+			,targetPort <- outIP	
+		) 
+		, outSender : forsyde!LeafProcess ( 
+			name <- inSig.name + '_sender' 
+			,ports <- outIP
+			,processConstructor <- thisModule.copyProcessConstructor('sender')
+			,constructorArguments <- Sequence {thisModule.copyConstructorArgument('rank',((thisModule.xml.equalAtts('process',inSig.targetProcess.name)->first().attribute('processor').value.toInteger())-1).toString())
+											   ,thisModule.copyConstructorArgument('id',thisModule.mainSigs->indexOf(inSig).toString())
+											   } 		
+		)
+		,outIP : forsyde!InputPort (
+			name <- inSig.name + '_senderPort' 
+			,moc <- inSig.moc
+			,dataType <- inSig.dataType 
+		) 
+}
+rule receiverCreatingSignals {
+	from 
+		inSig : forsyde!Signal 
+		(
+			if thisModule.xml.equalAtts('process',inSig.targetProcess.name)->notEmpty()
+			then if thisModule.xml.equalAtts('process',inSig.sourceProcess.name)->first().attribute('processor').value = 
+				    thisModule.xml.equalAtts('process',inSig.targetProcess.name)->first().attribute('processor').value 
+				 then false 
+				 else thisModule.xml.equalAtts('process',inSig.targetProcess.name)->first().attribute('processor').value = thisModule.output.toString()
+				 endif	 	 
+			else false 
+			endif 
+		)
+	to 
+		outSig1 : forsyde!Signal (
+			name <- inSig.name + '_fromReceiver'
+			,moc <- inSig.moc 
+			,dataType <- inSig.dataType
+			,sourceProcess <- outReceiver
+			,sourcePort <- outOP
+			,targetProcess <- inSig.targetProcess
+			,targetPort <- inSig.targetPort	
+		)
+		, outReceiver : forsyde!LeafProcess (
+			name <- inSig.name + '_receiver' 
+			,ports <- outOP
+			,processConstructor <- thisModule.copyProcessConstructor('receiver')
+			,constructorArguments <- Sequence {thisModule.copyConstructorArgument('rank',((thisModule.xml.equalAtts('process',inSig.sourceProcess.name)->first().attribute('processor').value.toInteger())-1).toString())
+											   ,thisModule.copyConstructorArgument('id',thisModule.mainSigs->indexOf(inSig).toString())
+											   } 	 		
+		)
+		,outOP : forsyde!OutputPort (
+			name <- inSig.name + '_receiverPort' 
+			,moc <- inSig.moc
+			,dataType <- inSig.dataType
+		) 
+}
+
+
+rule processConstructorToProcessConstructor {
+	from 
+		inPC : forsyde!ProcessConstructor (
+			(
+				(
+					thisModule.systemLeafs-> collect (pr | pr.processConstructor) -> flatten()
+				).union (
+					thisModule.systemComposites->collect (cp | cp.component.processes)-> flatten()-> collect (pr | pr.processConstructor)  -> flatten() 
+				)
+			)-> includes (inPC)	
+		)
+	to 
+		outPC : forsyde!ProcessConstructor (
+			name <- inPC.name 
+			,moc <- inPC.moc
+		)
+}
+
+rule constructorArgumentToConstructorArgument {
+	from 
+		inCA : forsyde!ConstructorArgument (
+			(
+				(
+					thisModule.systemLeafs-> collect (pr | pr.constructorArguments) -> flatten()
+				).union ( 
+					thisModule.systemComposites->collect (cp | cp.component.processes)-> flatten()-> collect (pr | pr.constructorArguments)  -> flatten()
+				)
+			)-> includes (inCA)	
+		)
+	to 
+	    outCA : forsyde!ConstructorArgument (
+	    	name <- inCA.name
+			,type <- inCA.type 
+			,value <- inCA.value
+	    )
+}
+
+-- lazy rules 
+
+
+lazy rule copyProcessConstructor {
+	from 
+		inName : String 
+	to 
+		outCP : forsyde!ProcessConstructor (
+			name <- inName 
+			,moc <- 'SDF'
+		)
+}
+
+lazy rule copyConstructorArgument {
+	from 
+		inName : String
+		,inValue :String
+	to 
+		outCP : forsyde!ConstructorArgument (
+			name <- inName 
+			,value <- inValue
+		)
+}
+
+--	helpers 
+
+
+-- get the sequence of elements which their specified attribute equals the specified value 
+
+helper context XML!Root def : equalAtts(att : String,  val:String) : Sequence (XML!Element) = 
+	if (att = 'process') or (att='processor') then
+		self.children->select(x | x.name ='Element')
+					 ->select(y | y.attribute(att).value = val)
+	else
+		OclUndefined
+	endif;
+
+helper def : output : Integer = 1 ;
+
+--get the value of specified attribute
+
+helper context XML!Element def : attribute(attName: String) : XML!Attribute = 
+	self.children->select(a | a.name=attName)->first();
+
+helper def : remainedSignals (inSigs : Sequence(forsyde!Signal), xml : XML!Root) : Sequence(forsyde!Signal) = 
+	inSigs -> select (s | xml.equalAtts('process', s.sourceProcess.name)->first().attribute('processor').value = 
+						  xml.equalAtts('process', s.targetProcess.name)->first().attribute('processor').value 
+					  )
+			-> select (s | xml.equalAtts('process', s.sourceProcess.name)->first().attribute('processor').value = thisModule.output.toString());
+
+helper def : receiverCreatingSignals (inSigs : Sequence(forsyde!Signal), xml : XML!Root) : Sequence (forsyde!Signal) = 
+	inSigs -> select (s |not (xml.equalAtts('process', s.sourceProcess.name)->first().attribute('processor').value = 
+						  xml.equalAtts('process', s.targetProcess.name)->first().attribute('processor').value) 
+					  )
+			->select (s | xml.equalAtts('process', s.targetProcess.name)->first().attribute('processor').value = thisModule.output.toString());
+
+helper def : senderCreatingSignals (inSigs : Sequence(forsyde!Signal), xml : XML!Root) : Sequence (forsyde!Signal) = 
+	inSigs -> select (s |not (xml.equalAtts('process', s.sourceProcess.name)->first().attribute('processor').value = 
+						  xml.equalAtts('process', s.targetProcess.name)->first().attribute('processor').value )
+					  )
+			->select (s | xml.equalAtts('process', s.sourceProcess.name)->first().attribute('processor').value = thisModule.output.toString());	
+
+helper def : remainedProcesses (inPrs : Sequence (forsyde!Process), xml : XML!Root) : Sequence(forsyde!Process) = 
+	inPrs -> select (p | xml.equalAtts('process',p.name)->first().attribute('processor').value = thisModule.output.toString());
+
+helper def : xml : XML!Root =
+	XML!Root.allInstances()->first();
+
+helper def : systemLeafs : Sequence(forsyde!LeafProcess) =
+	forsyde!System.allInstances()->first().processNetworks->first().processes
+					->select (pr | (pr.oclIsTypeOf(forsyde!LeafProcess))
+						and (thisModule.xml.equalAtts('process',pr.name)->notEmpty())
+						and (thisModule.xml.equalAtts('process',pr.name)->first().attribute('processor').value = thisModule.output.toString())
+					);
+
+helper def : systemComposites : Sequence(forsyde!CompositeProcess) =
+	forsyde!System.allInstances()->first().processNetworks->first().processes
+					-> select (pr | (pr.oclIsTypeOf(forsyde!CompositeProcess))
+						and (thisModule.xml.equalAtts('process',pr.name)->notEmpty())
+						and (thisModule.xml.equalAtts('process',pr.name)->first().attribute('processor').value = thisModule.output.toString())
+					);
+
+helper def : mainSigs : Sequence(forsyde!Signals) =
+	forsyde!System.allInstances()->first().processNetworks->first().signals ;

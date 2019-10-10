@@ -1,0 +1,1194 @@
+module sdf3ToForSyDe_;
+
+create OUT : forsyde from IN : XML;
+
+-- Generating system from element 'applicationGraph'
+
+rule applicationGraphToSystem { 
+	from 
+		inappGraph : XML!Element (
+				     inappGraph.name = 'applicationGraph'
+		)
+	to 
+		outSys : forsyde!System 
+		(
+			processNetworks <- Sequence { inappGraph.children -> select ( e | e.name = 'sdf'), thisModule.case2->collect (c | thisModule.resolveTemp(c, 'PN'))	
+			                              , thisModule.case4->collect (c | thisModule.resolveTemp(c, 'PN'))
+			                              , thisModule.case5->collect (c | thisModule.resolveTemp(c, 'PN'))
+			                              , thisModule.case6->collect (c | thisModule.resolveTemp(c, 'PN'))
+			                              , thisModule.case8->collect (c | thisModule.resolveTemp(c, 'PN'))
+			                              , thisModule.case9->collect (c | thisModule.resolveTemp(c, 'PN'))
+			                              , thisModule.case10->collect (c | thisModule.resolveTemp(c, 'PN'))
+			}
+			
+		)
+}
+
+-- Generating main system process network from application graph child element 'sdf' 
+
+rule sdfToProcessNetwork { 
+	from 
+		inSdf : XML!Element 
+		(
+			inSdf.name = 'sdf'	
+		)
+	to 
+		outPN : forsyde!ProcessNetwork 
+		(
+			name <- 'top'
+			,processes <- inSdf.children -> select (e | e.name = 'actor')
+			,signals <- inSdf.children -> select ( e | e.name = 'channel')
+		)
+}
+ 
+
+-- There are 10 cases for actors : 
+-- 1- actor with only one input and no output --> sink process
+-- 2- actor with multiple input and no output --> zipN + sink process
+-- 3- actor with one output and no input without initial tokens on channels initiated from output --> source process
+-- 4- actor with one output and no input with initial tokens on channels initiated from output --> source process + delay
+-- 5- actor with multiple outputs and no input without initial tokens on channels initiated from output --> source process + unzipN
+-- 6- actor with multiple outputs and no input with initial tokens on channels initiated from output --> source process + unzipN + delay
+-- 7- actor with one output and one or multiple input without initial tokens on channels initiated from output --> comb process
+-- 8- actor with one output and one or multiple input with initial tokens on channels initiated from output --> comb process + delay
+-- 9- actor with multiple output and one or multiple input without initial tokens on channels initiated from output --> comb process + unzipN
+-- 10- actor with multiple output and one or multiple input with initial tokens on channels initiated from output --> comb process + unzipN + delay
+
+
+-- case 1: actor with only one input and no output --> sink process
+
+rule case1_matching { 
+	from 
+		actor: XML!Element 
+		(
+			thisModule.case1 -> includes ( actor )
+		)
+	using { 
+			inport : XML!Element = 
+					 actor.children -> select ( p | p.name = 'port') -> first() ; 		
+		}
+	to 
+		leaf : forsyde!LeafProcess 
+		( 
+			name <- actor.attribute('name').value 
+			,ports <- inport 				
+			,processConstructor <- thisModule.processConstructor( 'sink' )
+			,constructorArguments <-  thisModule.constructorArgument('_func', leaf.name + '_func')
+		)			
+}
+
+-- case 2: actor with multiple input and no output --> zipN + sink process
+
+rule case2_matching { 
+	from 
+		actor: XML!Element 
+		(
+			thisModule.case2 -> includes ( actor)	
+		)
+	using { 
+			inports : Sequence(XML!Element) = 
+					 actor.children -> select ( p | p.name = 'port')  ; 		
+		}
+	to 
+		compositeProcess : forsyde!CompositeProcess (
+			name <- actor.attribute('name').value  
+			,ports <- actor.children -> select ( p | p.name = 'port')				
+			,component <- PN
+	   )
+	   ,PN : forsyde!ProcessNetwork (  
+			name <- actor.attribute('name').value  
+			,processes <- Sequence {leaf, zip} 							
+			,signals <- signal	
+	   )
+	   ,leaf : forsyde!LeafProcess (
+	   		name <- actor.attribute('name').value + '_leaf'
+			,ports <- leafInP 				
+			,processConstructor <- thisModule.processConstructor('sink')
+			,constructorArguments <- thisModule.constructorArgument('_func',leaf.name+'_func')
+	   )
+	   ,zip : forsyde!LeafProcess (
+	   	name <- actor.attribute('name').value + '_unzip' 
+			,ports <- Sequence {inports -> collect ( ip | thisModule.resolveTemp(ip, 'zipInputPort') ) ,zipOutP}  				
+			,processConstructor <- thisModule.processConstructor('zipN')
+			,constructorArguments <- Sequence {thisModule.constructorArgument('_func','make_tuple')
+												,inports -> collect (a |
+													thisModule.constructorArgument
+													( 'i'.concat( inports->indexOf(a).toString() ).concat('toks'),a.attribute('rate').value.toString() ) 
+													                )
+												}
+	   )
+	   ,signal : forsyde!Signal (
+	   		name <- actor.attribute('name').value + '_fromZip' 
+			,moc <- 'SDF' 
+			,dataType <- 'tuple<vector<array<int,' + inports->first().attribute('rate').value + '>' 
+											 + inports ->excluding(inports->first()) 
+											 -> collect(p | ',vector<array<int,' + p.attribute('rate').value + '>') + '>' 
+			,sourceProcess <- leaf
+			,targetProcess <- zip  					   
+			,sourcePort <- zipOutP
+			,targetPort <- leafInP	   
+			)
+	   ,leafInP : forsyde!InputPort (
+	   		name <-  actor.attribute('name').value + '_out'
+			,moc <- 'SDF'
+			,dataType <- 'tuple<vector<array<int,' + inports->first().attribute('rate').value + '>' 
+											 + inports ->excluding(inports->first()) 
+											 -> collect(p | ',vector<array<int,' + p.attribute('rate').value + '>') + '>'	
+	   )
+	   ,zipOutP : forsyde!OutputPort (
+	   		name <-  zip.name + '_in'
+	   		,moc <- 'SDF'
+			,dataType <- 'tuple<vector<array<int,' + inports->first().attribute('rate').value + '>' 
+											 + inports ->excluding(inports->first()) 
+											 -> collect(p | ',vector<array<int,' + p.attribute('rate').value + '>') + '>'
+	   )	   
+}			
+
+-- case3: actor with one output and no input without initial tokens on channels initiated from output --> source process
+
+rule case3_matching { 
+	from 
+		actor: XML!Element 
+		(
+			thisModule.case3 -> includes ( actor )
+		)
+	to 
+		leaf : forsyde!LeafProcess 
+		( 
+			name <- actor.attribute('name').value 
+			,ports <- actor.children -> select ( p | p.name = 'port') -> first() 				
+			,processConstructor <- thisModule.processConstructor( 'source' )
+			,constructorArguments <-  thisModule.constructorArgument('_func', leaf.name + '_func')
+		)			
+}
+
+-- case4: actor with one output and no input with initial tokens on channels initiated from output --> source process + delay
+
+rule case4_matching { 
+	from 
+		actor: XML!Element 
+		(
+			thisModule.case4 -> includes ( actor )
+		)
+	to 
+		 compositeProcess : forsyde!CompositeProcess (
+		   	 name <- actor.attribute('name').value  
+			 ,ports <- actor.children -> select (p | p.name = 'port')  				
+			 ,component <- PN
+	    )
+	    ,PN : forsyde!ProcessNetwork (  
+			 name <- actor.attribute('name').value  
+			,processes <- Sequence {leaf, delay} 							
+			 ,signals <- signal	
+	    )
+		,leaf : forsyde!LeafProcess 
+		( 
+			name <- actor.attribute('name').value + '_leaf'
+			,ports <- actor.children -> select (p | p.name = 'port') -> first() 				
+			,processConstructor <- thisModule.processConstructor( 'source' )
+			,constructorArguments <-  thisModule.constructorArgument('_func', leaf.name + '_func')
+		)
+		,delay : forsyde!LeafProcess
+		(
+			name <- actor.attribute('name').value + '_delay'
+			,ports <- Sequence {delayInP,delayOutP} 				
+			,processConstructor <- thisModule.processConstructor( 'delayn' )
+			,constructorArguments <-  Sequence {thisModule.constructorArgument('init_val', '0')
+												,thisModule.constructorArgument(
+													'n' , thisModule.systemChannels -> select ( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+													->first().attribute('initialTokens').value ) }
+		)
+		,leafOutP : forsyde!OutputPort 
+		(
+			name <- 'leafOutP' 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties ->select ( e | e.attribute('channel').value = 
+													thisModule.systemChannels->select( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+													->first().attribute('name').value )
+						                      		->first().children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>'
+		)
+		,delayInP : forsyde!InputPort 
+		(
+			name <- 'delayInP'
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties ->select ( e | e.attribute('channel').value = 
+													thisModule.systemChannels->select( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+													->first().attribute('name').value )
+						                      		->first().children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>'
+		)
+		,delayOutP : forsyde!OutputPort
+		(
+			name <- 'delayOutP'
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties ->select ( e | e.attribute('channel').value = 
+													thisModule.systemChannels->select( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+													->first().attribute('name').value )
+						                      		->first().children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>'
+			,boundProcess <- compositeProcess 
+			,boundPort <- actor.children -> select ( p | p.name = 'port' ) -> first()
+		)
+		,signal : forsyde!Signal 
+		(
+			name <- actor.attribute('name').value + '_toDelay'
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties ->select ( e | e.attribute('channel').value = 
+													thisModule.systemChannels->select( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+													->first().attribute('name').value )
+						                      		->first().children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>' 
+			,sourceProcess <- leaf
+			,targetProcess <- delay
+			,sourcePort <- leafOutP
+			,targetPort <- delayInP
+		)
+}
+
+-- case5: actor with multiple outputs and no input without initial tokens on channels initiated from output --> source process + unzipN
+
+rule case5_matching { 
+	from 
+		actor: XML!Element 
+		(
+			thisModule.case5 -> includes ( actor )
+		)
+	using { 
+			oports : Sequence(XML!Element) = 
+					 actor.children -> select ( p | p.name = 'port')  ;
+			tuple : Sequence(XML!Element) = thisModule.channelProperties ->select ( e | thisModule.systemChannels->select( ch | ch.attribute('srcActor').value 
+																					= actor.attribute('name').value)->collect (ch | ch.attribute('name').value)
+																					-> includes (e.attribute('channel').value)
+																		  			)
+													->collect (cp | 'vector<array<int,' + cp.children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>>')->sum().toString() ;
+		}
+	to 
+		 compositeProcess : forsyde!CompositeProcess (
+		   	 name <- actor.attribute('name').value  
+			 ,ports <- oports  				
+			 ,component <- PN
+	    )
+	    ,PN : forsyde!ProcessNetwork (  
+			 name <- actor.attribute('name').value  
+			,processes <- Sequence {leaf, unzip} 							
+			 ,signals <- signal	
+	    )
+		,leaf : forsyde!LeafProcess 
+		( 
+			name <- actor.attribute('name').value + '_leaf'
+			,ports <- leafOutP 				
+			,processConstructor <- thisModule.processConstructor( 'source' )
+			,constructorArguments <-  thisModule.constructorArgument('_func', leaf.name + '_func')
+		)
+		,unzip : forsyde!LeafProcess
+		(
+			name <- actor.attribute('name').value + '_unzip'
+			,ports <- Sequence {unzipInP,oports -> collect ( op | thisModule.resolveTemp(op, 'unzipOutPort') ) } 				
+			,processConstructor <- thisModule.processConstructor( 'unzipN' )
+			,constructorArguments <-  Sequence {thisModule.constructorArgument('_func','read_tuple')
+												,oports -> collect (a |
+													thisModule.constructorArgument
+													( 'o'.concat( oports->indexOf(a).toString() ).concat('toks'),a.attribute('rate').value.toString() ) 
+													                )
+												}
+		)
+		,leafOutP : forsyde!OutputPort 
+		(
+			name <- 'leafOutP' 
+			,moc <- 'SDF'
+			,dataType <- 'tuple<' + tuple.substring(2,tuple.size()) + '>'
+		)
+		,unzipInP : forsyde!InputPort 
+		(
+			name <- 'unzipInP'
+			,moc <- 'SDF'
+			,dataType <- 'tuple<' + tuple.substring(2,tuple.size()) + '>'
+		)
+		,signal : forsyde!Signal 
+		(
+			name <- actor.attribute('name').value + '_toUnzip'
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + 'tuple<' + tuple.substring(12,tuple.size()) + '>'
+			,sourceProcess <- leaf
+			,targetProcess <- unzip
+			,sourcePort <- leafOutP
+			,targetPort <- unzipInP
+		)
+}
+
+-- case6: actor with multiple outputs and no input with initial tokens on channels initiated from output --> source process + unzipN + delay
+
+rule case6_matching { 
+	from 
+		actor: XML!Element 
+		(
+			thisModule.case6 -> includes ( actor )
+		)
+	using { 
+			oports : Sequence(XML!Element) = 
+					 actor.children -> select ( p | p.name = 'port')  ;
+		    oportsWithInitials : Sequence (XML!Element) = oports -> select ( op | thisModule.systemChannels 
+			  -> select ( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+			  -> reject ( ch | ch.attribute('initialTokens').value = OclUndefined ) -> collect ( p | p.attribute('srcPort').value )
+			  																					-> includes(op) ) ; 
+			tuple : Sequence(XML!Element) = thisModule.channelProperties ->select ( e | thisModule.systemChannels->select( ch | ch.attribute('srcActor').value 
+																					= actor.attribute('name').value)->collect (ch | ch.attribute('name').value)
+																					-> includes (e.attribute('channel').value)
+																		  			)
+													->collect (cp | ',vector<array<int,' + cp.children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>>')->sum().toString() ;
+		}
+	to 
+		 compositeProcess : forsyde!CompositeProcess (
+		   	 name <- actor.attribute('name').value 
+			 ,ports <- oports  				
+			 ,component <- PN
+	    )
+	    ,PN : forsyde!ProcessNetwork (  
+			 name <- actor.attribute('name').value  
+			,processes <- Sequence {leaf, unzip, oportsWithInitials -> collect ( cw | thisModule.resolveTemp(cw, 'delay'))} 							
+			 ,signals <- signal	
+	    )
+		,leaf : forsyde!LeafProcess 
+		( 
+			name <- actor.attribute('name').value + '_leaf'
+			,ports <- leafOutP 				
+			,processConstructor <- thisModule.processConstructor( 'source' )
+			,constructorArguments <-  thisModule.constructorArgument('_func', leaf.name + '_func')
+		)
+		,unzip : forsyde!LeafProcess
+		(
+			name <- actor.attribute('name').value + '_unzip'
+			,ports <- Sequence { unzipInP,oports -> collect ( op | thisModule.resolveTemp(op, 'unzipOutPort') ) } 				
+			,processConstructor <- thisModule.processConstructor( 'unzipN' )
+			,constructorArguments <-  Sequence {thisModule.constructorArgument('_func','read_tuple')
+												,oports -> collect (a |
+													thisModule.constructorArgument
+													( 'o'.concat( oports->indexOf(a).toString() ).concat('toks'),a.attribute('rate').value.toString() ) 
+													                )
+												}
+		)
+		,leafOutP : forsyde!OutputPort 
+		(
+			name <- 'leafOutP' 
+			,moc <- 'SDF'
+			,dataType <- 'tuple<' + tuple.substring(2,tuple.size()) + '>'
+		)
+		,unzipInP : forsyde!InputPort 
+		(
+			name <- 'unzipInP'
+			,moc <- 'SDF'
+			,dataType <- 'tuple<' + tuple.substring(2,tuple.size()) + '>'
+		)
+		,signal : forsyde!Signal 
+		(
+			name <- actor.attribute('name').value + '_toUnzip'
+			,moc <- 'SDF'
+			,dataType <-  'tuple<' + tuple.substring(2,tuple.size()) + '>'
+			,sourceProcess <- leaf
+			,targetProcess <- unzip
+			,sourcePort <- leafOutP
+			,targetPort <- unzipInP
+		)
+}
+
+-- case7: actor with one output and one or multiple input without initial tokens on channels initiated from output --> comb process
+
+rule case7_matching { 
+	
+	from 
+		actor: XML!Element 
+		(
+			thisModule.case7 -> includes ( actor )
+		)
+	using { 
+			inports : Sequence(XML!Element) = 
+					 actor.children -> select ( p | p.name = 'port' ) -> select ( p | p.attribute('type').value = 'in')  ;
+		    oport : XML!Element = 
+		    		actor.children -> select ( p | p.name = 'port' ) -> select ( p | p.attribute('type').value = 'out') ->first() ; 
+		}
+	to 
+		leaf : forsyde!LeafProcess 
+		( 
+			name <- actor.attribute('name').value 
+			,ports <- actor.children -> select ( p | p.name = 'port' ) 				
+			,processConstructor <- thisModule.processConstructor( 'comb' + inports.size().toString() )
+			,constructorArguments <-  Sequence { thisModule.constructorArgument('_func', actor.attribute('name').value + '_func'),
+												thisModule.constructorArgument('o1toks' ,  oport.attribute('rate').value.toString() ),
+												inports -> collect (a |
+													thisModule.constructorArgument('i'.concat(inports->indexOf(a).toString()).concat('toks')
+																				   ,a.attribute('rate').value.toString() ) )
+												}->flatten()
+		)
+}
+
+-- case8: actor with one output and one or multiple input with initial tokens on channels initiated from output --> comb process + delay
+
+rule case8_matching { 
+	from 
+		actor: XML!Element 
+		(
+			thisModule.case8 -> includes ( actor )
+		)
+	using { 
+			inports : Sequence(XML!Element) = 
+					 actor.children -> select ( p | p.name = 'port' ) -> select ( p | p.attribute('type').value = 'in')  ;
+		    oport : XML!Element = 
+		    		actor.children -> select ( p | p.name = 'port' ) -> select ( p | p.attribute('type').value = 'out') ->first() ;  																					 
+		}
+	to 
+		 compositeProcess : forsyde!CompositeProcess (
+		   	 name <- actor.attribute('name').value  
+			 ,ports <- actor.children -> select ( p | p.name = 'port' ) 				
+			 ,component <- PN
+	    )
+	    ,PN : forsyde!ProcessNetwork (  
+			 name <- actor.attribute('name').value  
+			,processes <- Sequence {leaf, delay} 							
+			 ,signals <- signal	
+	    )
+		,leaf : forsyde!LeafProcess 
+		( 
+			name <- actor.attribute('name').value + '_leaf' 
+			,ports <- Sequence {inports -> collect (ip | thisModule.resolveTemp(ip, 'leafInputPort')),leafOutP} 				
+			,processConstructor <- thisModule.processConstructor( 'comb' + inports.size().toString() )
+			,constructorArguments <-  Sequence { thisModule.constructorArgument('_func', actor.attribute('name').value + '_func'),
+												thisModule.constructorArgument('o1toks' ,  oport.attribute('rate').value.toString() ),
+												inports -> collect (a |
+													thisModule.constructorArgument('i'.concat(inports->indexOf(a).toString()).concat('toks')
+																				   ,a.attribute('rate').value.toString() ) )
+												}->flatten()
+		)
+		,delay : forsyde!LeafProcess
+		(
+			name <- actor.attribute('name').value + '_delay'
+			,ports <- Sequence { delayInP, delayOutP } 				
+			,processConstructor <- thisModule.processConstructor( 'delayn' )
+			,constructorArguments <- Sequence { thisModule.constructorArgument('init_val', '0')
+												,thisModule.constructorArgument(
+													'n' , thisModule.systemChannels -> select ( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+													->first().attribute('initialTokens').value ) }
+												
+		)
+		,leafOutP : forsyde!OutputPort 
+		(
+			name <- 'leafOutP' 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties ->select ( e | e.attribute('channel').value = 
+													thisModule.systemChannels->select( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+													->first().attribute('name').value )
+						                      		->first().children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>'
+		)
+		,delayInP : forsyde!InputPort 
+		(
+			name <- 'delayInP'
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties ->select ( e | e.attribute('channel').value = 
+													thisModule.systemChannels->select( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+													->first().attribute('name').value )
+						                      		->first().children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>'
+		)
+		,delayOutP : forsyde!OutputPort 
+		(
+			name <- 'delayOutP'
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties ->select ( e | e.attribute('channel').value = 
+													thisModule.systemChannels->select( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+													->first().attribute('name').value )
+						                      		->first().children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>'
+			,boundProcess <- compositeProcess 
+			,boundPort <- oport
+		)
+		,signal : forsyde!Signal 
+		(
+			name <- actor.attribute('name').value + '_toDelay'
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties ->select ( e | e.attribute('channel').value = 
+													thisModule.systemChannels->select( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+													->first().attribute('name').value )
+						                      		->first().children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>' 
+			,sourceProcess <- leaf
+			,targetProcess <- delay
+			,sourcePort <- leafOutP
+			,targetPort <- delayInP
+		)
+}
+
+-- case9: actor with multiple output and one or multiple input without initial tokens on channels initiated from output --> comb process + unzipN
+
+rule case9_matching
+{
+from 
+		actor: XML!Element 
+		(
+			thisModule.case9 -> includes ( actor )
+		)
+	using { 
+			inports : Sequence(XML!Element) = 
+					 actor.children -> select ( p | p.name = 'port' ) -> select ( p | p.attribute('type').value = 'in')  ;
+		    oports : Sequence(XML!Element) = 
+		    		actor.children -> select ( p | p.name = 'port' ) -> select ( p | p.attribute('type').value = 'out')  ; 
+			tuple : Sequence(XML!Element) = thisModule.channelProperties ->select ( e | thisModule.systemChannels->select( ch | ch.attribute('srcActor').value 
+																					= actor.attribute('name').value)->collect (ch | ch.attribute('name').value)
+																					-> includes (e.attribute('channel').value)
+																		  			)
+													->collect (cp | ',vector<array<int,' + cp.children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>>')->sum().toString() ;
+		}
+	to 
+		 compositeProcess : forsyde!CompositeProcess (
+		   	 name <- actor.attribute('name').value  
+			 ,ports <- actor.children -> select ( p | p.name = 'port' )  				
+			 ,component <- PN
+	    )
+	    ,PN : forsyde!ProcessNetwork (  
+			 name <- actor.attribute('name').value  
+			,processes <- Sequence {leaf, unzip} 							
+			 ,signals <- signal	
+	    )
+		,leaf : forsyde!LeafProcess 
+		( 
+			name <- actor.attribute('name').value + '_leaf'
+			,ports <- Sequence {inports -> collect (ip | thisModule.resolveTemp(ip, 'leafInputPort')),leafOutP} 				
+			,processConstructor <- thisModule.processConstructor( 'comb' + inports.size().toString() )
+			,constructorArguments <-  Sequence {thisModule.constructorArgument('_func',leaf.name+'_func')
+													,thisModule.constructorArgument('o1toks','1')
+													,inports -> collect (a |
+													thisModule.constructorArgument('i'.concat(inports->indexOf(a).toString()).concat('toks'),a.attribute('rate').value.toString()))
+												}->flatten()
+		)
+		,unzip : forsyde!LeafProcess
+		(
+			name <- actor.attribute('name').value + '_unzip'
+			,ports <- Sequence { unzipInP, oports -> collect ( op | thisModule.resolveTemp(op, 'unzipOutPort') ) } 				
+			,processConstructor <- thisModule.processConstructor( 'unzipN' )
+			,constructorArguments <- Sequence {thisModule.constructorArgument('_func','read_tuple')
+												,oports -> collect (a |
+													thisModule.constructorArgument
+													( 'o'.concat( oports->indexOf(a).toString() ).concat('toks'),a.attribute('rate').value.toString() ) 
+													                )
+												}
+		)
+		,leafOutP : forsyde!OutputPort 
+		(
+			name <- 'leafOutP' 
+			,moc <- 'SDF'
+			,dataType <- 'tuple<' + tuple.substring(2,tuple.size()) + '>'
+		)
+		,unzipInP : forsyde!InputPort 
+		(
+			name <- 'delayInP'
+			,moc <- 'SDF'
+			,dataType <- 'tuple<' + tuple.substring(2,tuple.size()) + '>'
+		)
+		,signal : forsyde!Signal 
+		(
+			name <- actor.attribute('name').value + '_toUnzip'
+			,moc <- 'SDF'
+			,dataType <- 'tuple<' + tuple.substring(2,tuple.size()) + '>'
+			,sourceProcess <- leaf
+			,targetProcess <- unzip
+			,sourcePort <- leafOutP
+			,targetPort <- unzipInP
+		)
+}
+
+-- case10: actor with multiple output and one or multiple input with initial tokens on channels initiated from output --> comb process + unzipN + delay
+
+rule case10_matching {
+	from 
+		actor: XML!Element 
+		(
+			thisModule.case10 -> includes ( actor )
+		)
+	using { 
+			inports : Sequence(XML!Element) = 
+					 actor.children -> select ( p | p.name = 'port' ) -> select ( p | p.attribute('type').value = 'in')  ;
+		    oports : Sequence(XML!Element) = 
+		    		actor.children -> select ( p | p.name = 'port' ) -> select ( p | p.attribute('type').value = 'out')  ; 
+		    oportsWithInitials : Sequence (XML!Element) = oports -> select ( op | thisModule.systemChannels 
+			  -> select ( ch | ch.attribute('srcActor').value = actor.attribute('name').value )
+			  -> reject ( ch | ch.attribute('initialTokens') = OclUndefined ) -> collect ( p | p.attribute('srcPort').value )
+			  																					-> includes(op.attribute('name').value) ) ; 
+			tuple : Sequence(XML!Element) = thisModule.channelProperties ->select ( e | thisModule.systemChannels->select( ch | ch.attribute('srcActor').value 
+																					= actor.attribute('name').value)->collect (ch | ch.attribute('name').value)
+																					-> includes (e.attribute('channel').value)
+																		  			)
+													->collect (cp | ',vector<array<int,' + cp.children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>>')->sum().toString() ;
+		}
+	to 
+		 compositeProcess : forsyde!CompositeProcess (
+		   	 name <- actor.attribute('name').value  
+			 ,ports <- actor.children -> select ( p | p.name = 'port' )  				
+			 ,component <- PN
+	    )
+	    ,PN : forsyde!ProcessNetwork (  
+			 name <- actor.attribute('name').value  
+			,processes <- Sequence {leaf, unzip, oportsWithInitials -> collect ( cw | thisModule.resolveTemp(cw, 'delay'))} 							
+			 ,signals <- Sequence {signal , oportsWithInitials -> collect(opw | thisModule.resolveTemp(opw, 'signal'))}
+	    )
+		,leaf : forsyde!LeafProcess 
+		( 
+			name <- actor.attribute('name').value + '_leaf'
+			,ports <- Sequence { inports -> collect ( ip | thisModule.resolveTemp(ip, 'leafInputPort') ), leafOutP }				
+			,processConstructor <- thisModule.processConstructor( 'comb' + inports.size().toString() )
+			,constructorArguments <- Sequence {thisModule.constructorArgument('_func',leaf.name+'_func')
+													,thisModule.constructorArgument('o1toks','1')
+													,inports -> collect (a |
+													thisModule.constructorArgument('i'.concat(inports->indexOf(a).toString()).concat('toks'),a.attribute('rate').value.toString()))
+												}->flatten()
+		)
+		,unzip : forsyde!LeafProcess
+		(
+			name <- actor.attribute('name').value + '_unzip'
+			,ports <- Sequence { unzipInP,oports -> collect ( op | thisModule.resolveTemp(op, 'unzipOutPort') ) } 				
+			,processConstructor <- thisModule.processConstructor( 'unzipN' )
+			,constructorArguments <-  Sequence {thisModule.constructorArgument('_func','read_tuple')
+												,oports -> collect (a |
+													thisModule.constructorArgument
+													( 'o'.concat( oports->indexOf(a).toString() ).concat('toks'),a.attribute('rate').value.toString() ) 
+													                )
+												}
+		)
+		,leafOutP : forsyde!OutputPort 
+		(
+			name <- 'leafOutP' 
+			,moc <- 'SDF'
+			,dataType <- 'tuple<' + tuple.substring(2,tuple.size()) + '>'
+		)
+		,unzipInP : forsyde!InputPort 
+		(
+			name <- 'unzipInP'
+			,moc <- 'SDF'
+			,dataType <- 'tuple<' + tuple.substring(2,tuple.size()) + '>'
+		)
+		,signal : forsyde!Signal 
+		(
+			name <- actor.attribute('name').value + '_toUnzip'
+			,moc <- 'SDF'
+			,dataType <- 'tuple<' + tuple.substring(2,tuple.size()) + '>'
+			,sourceProcess <- leaf
+			,targetProcess <- unzip
+			,sourcePort <- leafOutP
+			,targetPort <- unzipInP
+		)
+	
+}
+
+-- channels to forsyde signals   
+
+rule channels_1_2_3_4_5_6_7_8_9_10 { 
+	from 
+		ch : XML!Element 
+		(
+			ch.name = 'channel' and 
+			( thisModule.systemChannels -> includes(ch) ) 
+			
+		)
+	to 
+		 sig : forsyde!Signal (
+			name <- ch.attribute('name').value 	
+			,moc <- 'SDF' 
+			,dataType <- 'array<int,' + thisModule.channelProperties ->select ( e | e.attribute('channel').value = ch.attribute('name').value )
+						                      		->first().children -> select (e | e.name = 'tokenSize') 
+											  		-> first().attribute('sz').value.toString() + '>' 
+			,sourceProcess <- thisModule.systemActors -> select (a | ch.attribute('srcActor').value = a.attribute('name').value) -> first()
+			,targetProcess <- thisModule.systemActors -> select (a | ch.attribute('dstActor').value = a.attribute('name').value) -> first()
+			,sourcePort <- thisModule.systemActors -> select (a | ch.attribute('srcActor').value = a.attribute('name').value) 
+							-> first().children ->select (e | e.name = 'port') -> select (p | ch.attribute('srcPort').value = p.attribute('name').value)
+							->first()
+			,targetPort <- thisModule.systemActors-> select (a | ch.attribute('dstActor').value = a.attribute('name').value) 
+							-> first().children ->select (e | e.name = 'port') -> select (p | ch.attribute('dstPort').value = p.attribute('name').value)
+							->first()
+		) 
+}
+
+-- ports to forsyde ports
+
+--mapping in ports to forsyde input port
+
+-- for cases 1 and 7 there is no need for creating any additional input ports
+
+rule inputPorts1_7 {
+	from 
+		p : XML!Element (
+			p.name = 'port' and 
+			if thisModule.systemInports -> includes (p)  
+			then if thisModule.case1.union(thisModule.case7)->includes ( p.parent )
+				 then if p.attribute('type').value = 'in'
+				 	  then true 
+				 	  else false 
+				 	  endif 
+			    else false 
+			    endif
+			else false 
+			endif
+		) 
+	to 
+		inputPort : forsyde!InputPort (
+			name <-  p.attribute('name').value 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('dstActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('dstPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'  	
+		)
+}
+
+-- for case 2 , we should also add input ports for zip
+
+rule inputPorts2 {
+	from 
+		p : XML!Element (
+			p.name = 'port' and
+			if thisModule.systemInports -> includes (p) 
+			then if thisModule.case2 ->includes ( p.parent ) 
+				 then if  p.attribute('type').value = 'in'
+				 	  then true 
+				 	  else false 
+				 	  endif 
+				 else false 
+				 endif
+			else false 
+			endif
+		) 
+	to 
+		inputPort : forsyde!InputPort (
+			name <-  p.attribute('name').value 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('dstActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('dstPort').value = p.attribute('name').value ) ) )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'  	
+		)
+		, zipInputPort : forsyde!InputPort (
+			name <- p.attribute('name').value + '_zip' 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('dstActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('dstPort').value = p.attribute('name').value ) ) )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'
+			,boundProcess <- p.parent 
+			,boundPort <- inputPort
+		)
+}
+
+-- for cases 8, 9 and 10, for every input port there should be an input port in the leaf process also 
+
+rule inputPorts8_9_10 {
+	from 
+		p : XML!Element (
+			p.name = 'port' and
+			if thisModule.systemInports -> includes (p)  
+			then if thisModule.case8.union(thisModule.case9).union(thisModule.case10) ->includes ( p.parent ) 
+				 then if p.attribute('type').value = 'in'
+				 	  then true 
+				 	  else false 
+				 	  endif 
+				 else false 
+				 endif
+			else false 
+			endif
+		) 
+	to 
+		inputPort : forsyde!InputPort (
+			name <-  p.attribute('name').value 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('dstActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('dstPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'  	
+		)
+		, leafInputPort : forsyde!InputPort (
+			name <- p.attribute('name').value + '_zip' 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('dstActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('dstPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'
+			,boundProcess <- p.parent 
+			,boundPort <- inputPort
+		)
+}
+
+
+-- for cases 3,4,7 and 8 there is no need for creating additional output ports
+
+rule outputPorts3_4_7_8 {
+	from 
+		p : XML!Element (
+			 p.name = 'port' and
+			 if thisModule.systemOutports -> includes (p) 
+			 then if thisModule.case3.union(thisModule.case4).union(thisModule.case7)
+					.union(thisModule.case8) 
+					->includes ( p.parent )
+				  then if p.attribute('type').value = 'out'
+			 	  	   then true 
+				  	   else false 
+				  	   endif 
+			 	  else false 
+			 	  endif
+			 else false 
+			 endif
+		) 
+	to 
+		outputPort : forsyde!OutputPort (
+			name <-  p.attribute('name').value 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'  	
+		)
+}
+
+-- for cases 5 and 9, there should be an output port for unzip process for every output port of the composite process 
+
+rule outputPorts5_9 {
+	from 
+		p : XML!Element (
+			p.name = 'port' and
+			if thisModule.systemOutports -> includes (p)  
+			then if thisModule.case5.union(thisModule.case9)
+			  		 ->includes ( p.parent ) 
+				 then if p.attribute('type').value = 'out'
+				 	  then true 
+				 	  else false 
+				 	  endif
+				 else false 
+				 endif
+			else false 
+			endif
+		) 
+	to 
+		outputPort : forsyde!OutputPort (
+			name <-  p.attribute('name').value 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'  	
+		)
+		,unzipOutPort : forsyde!OutputPort (
+			name <- 'unzipOutput_' + p.attribute('name').value 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'
+			,boundProcess <- p.parent
+			,boundPort <- outputPort
+		) 
+}
+
+-- for cases 6 and 10, there are two possible type of ports: ports which create delay components and ports which do not 
+
+-- case which ports do not create delay components 
+
+rule outputPorts6_10_noDelay { 
+	from 
+		p : XML!Element ( 
+			p.name = 'port' and
+			if thisModule.systemOutports -> includes (p) 
+			then if thisModule.case6.union(thisModule.case10)
+			  		->includes ( p.parent )
+				 then if  p.attribute('type').value = 'out' 	
+				 	  then if thisModule.systemChannels -> select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+				    		   -> select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) 
+							   -> first().attribute('initialTokens') = OclUndefined
+				 		   then true 
+				 		   else false 
+				 		   endif 
+					  else false 
+					  endif
+				 else false 
+				 endif
+			 else false 
+			 endif
+			)
+	to 
+		outputPort : forsyde!OutputPort (
+			name <-  p.attribute('name').value 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) ) -> first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'  	
+		)
+		,unzipOutPort : forsyde!OutputPort (
+			name <- 'unzipOutput_' + p.attribute('name').value 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'
+			,boundProcess <- p.parent
+			,boundPort <- outputPort
+		)
+}
+
+-- case which ports create delay components
+
+rule outputPorts6_10_Delay { 
+	from 
+		p : XML!Element ( 
+			p.name = 'port' and
+			if thisModule.systemOutports -> includes (p) 
+			then if thisModule.case6.union(thisModule.case10)
+			  		->includes ( p.parent )
+				 then if  p.attribute('type').value = 'out' 	
+				 	  then if thisModule.systemChannels -> select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+				    		   -> select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) 
+							   -> first().attribute('initialTokens') = OclUndefined
+				 		   then false 
+				 		   else true 
+				 		   endif 
+					  else false 
+					  endif
+				 else false 
+				 endif
+			 else false 
+			 endif
+			)
+	to 
+		outputPort : forsyde!OutputPort (
+			name <-  p.attribute('name').value 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'  	
+		)
+		,unzipOutPort : forsyde!OutputPort (
+			name <- 'unzipOutput_' + p.attribute('name').value 
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'
+		)
+		, delay : forsyde!LeafProcess (
+			name <- p.parent.attribute('name').value + '_delay_' + p.attribute('name').value
+			,ports <- Sequence {delayInP,delayOutP} 				
+			,processConstructor <- thisModule.processConstructor( 'delayn' )
+			,constructorArguments <-  Sequence {thisModule.constructorArgument('init_val', '0')
+												,thisModule.constructorArgument(
+													'n' , thisModule.systemChannels -> select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+													-> select (ch | ch.attribute('srcPort').value = p.attribute('name').value )
+													->first().attribute('initialTokens').value ) }
+		)
+		,delayInP : forsyde!InputPort 
+		(
+			name <- 'delayInP'
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'
+		)
+		,delayOutP : forsyde!OutputPort
+		(
+			name <- 'delayOutP'
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>'
+			,boundProcess <- p.parent 
+			,boundPort <- outputPort
+		)
+		,signal : forsyde!Signal 
+		(
+			name <- p.parent.attribute('name').value + '_toDelay'
+			,moc <- 'SDF'
+			,dataType <- 'array<int,' + thisModule.channelProperties 
+			                           ->select (e | ( e.attribute('channel').value ) = 
+										( thisModule.systemChannels ->select ( ch | ch.attribute('srcActor').value = p.parent.attribute('name').value )
+										  ->select ( ch | ch.attribute('srcPort').value = p.attribute('name').value ) )->first().attribute('name').value )
+										  -> first().children -> select (e | e.name = 'tokenSize') -> first().attribute('sz').value + '>' 
+			,sourceProcess <- thisModule.resolveTemp(p.parent, 'unzip')
+			,targetProcess <- delay
+			,sourcePort <- unzipOutPort
+			,targetPort <- delayInP
+		)
+
+}
+
+-- lazy rules 
+
+lazy rule processConstructor {
+	from 
+		pc : String 
+	to 
+		outPC : forsyde!ProcessConstructor (
+			name <- thisModule.trim(pc)  
+			,moc <- 'SDF'
+		)
+}
+
+lazy rule constructorArgument {
+	from 
+		inName : String
+		,inValue : String
+	to 
+		outPC : forsyde!ConstructorArgument (
+			name <- inName 
+			,value <- inValue
+		)
+}
+
+-- helpers 
+
+-- trimming to eliminate comb1
+
+helper def : trim(s : String) : String = 
+	if s = 'comb1' 
+	then 'comb'
+	else s
+	endif 
+	
+;
+
+-- get the desired attribute of an XML element
+
+helper context XML!Element def : attribute(attName: String) : XML!Attribute = 
+	self.children->select(a | a.name=attName)->first()
+;
+
+-- store all actors of the system
+
+helper def: systemActors : Sequence (XML!Element) = 
+	XML!Element.allInstances() -> select ( e | e.name = 'actor') ; 
+
+
+-- store all channels of the system 
+
+helper def: systemChannels : Sequence(XML!Element) = 
+	XML!Element.allInstances()-> select ( e | e.name = 'channel') ;
+
+-- store all channels of the system which do not have any initial tokens
+
+helper def: systemChannelsWithInitials : Sequence(XML!Element) = 
+	XML!Element.allInstances()-> select ( e | e.name = 'channel') -> reject ( ch | ch.attribute('initialTokens') = OclUndefined) ; 
+
+-- store all channels of the system which have initial tokens
+
+helper def: systemChannelsWithoutInitials : Sequence(XML!Element) = 
+	XML!Element.allInstances()-> select ( e | e.name = 'channel') -> select ( ch | ch.attribute('initialTokens') = OclUndefined) ; 
+ 
+-- actors which channels connected to them have initial tokens 
+
+helper def: actorsWithInitialTokens : Sequence (String) = 
+	XML!Element.allInstances() -> select ( e | e.name = 'actor') -> select ( a | ( thisModule.systemChannelsWithInitials -> collect ( 
+																			    ch | ch.attribute('srcActor').value.toString() ) )
+																				-> includes( a.attribute('name').value.toString() ) ) -> collect (n | n.attribute('name').value) 
+																			   ;
+
+
+-- store all channel properties
+
+helper def: channelProperties : Sequence (XML!Element) = 
+		XML!Element.allInstances() -> select ( e | e.name = 'channelProperties') ; 
+
+-- store all in ports 
+
+helper def: systemInports : Sequence (XML!Element) = 
+	XML!Element.allInstances() -> select ( e | e.name = 'port') -> select ( p | p.attribute('type').value = 'in') ; 
+	
+-- store all out ports 
+
+helper def: systemOutports : Sequence (XML!Element) = 
+	XML!Element.allInstances() -> select ( e | e.name = 'port') -> select ( p | p.attribute('type').value = 'out') ;	
+
+-- case1: actor with only one input and no output --> sink process
+
+helper def: case1: Sequence(XML!Element) = 
+	thisModule.systemActors -> select ( a | ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'in').size() = 1 )
+									    and ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'out').size() = 0 )
+	 								  ) ; 
+
+-- case2: actor with multiple input and no output --> zipN + sink process
+
+helper def: case2: Sequence(XML!Element) = 
+	thisModule.systemActors -> select ( a | ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'in').size() > 1 ) 
+									    and ( a.children -> select (p | p.name = 'port') -> select ( p | p.attribute('type').value = 'out').size() = 0 )
+	 								  ) ;
+-- case3: actor with one output and no input without initial tokens on channels initiated from output --> source process
+
+helper def: case3: Sequence(XML!Element) = 
+	thisModule.systemActors -> select ( a | ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'in').size() = 0 ) 
+									    and ( a.children -> select (p | p.name = 'port') -> select ( p | p.attribute('type').value = 'out').size() = 1 )
+	 								  ) -> select ( a | thisModule.actorsWithInitialTokens -> excludes(a.attribute('name').value) ) ;
+
+-- case4: actor with one output and no input with initial tokens on channels initiated from output --> source process + delay
+
+helper def: case4: Sequence(XML!Element) = 
+	thisModule.systemActors -> select ( a | ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'in').size() = 0 ) 
+									    and ( a.children -> select (p | p.name = 'port') -> select ( p | p.attribute('type').value = 'out').size() = 1 )
+	 								  ) -> select ( a | thisModule.actorsWithInitialTokens -> includes(a.attribute('name').value) ) ;
+
+-- case5: actor with multiple outputs and no input without initial tokens on channels initiated from output --> source process + unzipN
+
+helper def: case5: Sequence(XML!Element) = 
+	thisModule.systemActors -> select ( a | ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'in').size() = 0 ) 
+									    and ( a.children -> select (p | p.name = 'port') -> select ( p | p.attribute('type').value = 'out').size() > 1 )
+	 								  ) -> select ( a | thisModule.actorsWithInitialTokens -> excludes(a.attribute('name').value) ) ;
+
+-- case6: actor with multiple outputs and no input with initial tokens on channels initiated from output --> source process + unzipN + delay
+
+helper def: case6: Sequence(XML!Element) = 
+	thisModule.systemActors -> select ( a | ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'in').size() = 0 ) 
+									    and ( a.children -> select (p | p.name = 'port') -> select ( p | p.attribute('type').value = 'out').size() > 1 )
+	 								  ) -> select ( a | thisModule.actorsWithInitialTokens -> includes(a.attribute('name').value) ) ;
+
+
+-- case7: actor with one output and one or multiple input without initial tokens on channels initiated from output --> comb process
+
+helper def: case7: Sequence(XML!Element) = 
+	thisModule.systemActors -> select ( a | ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'in').size() > 0 ) 
+									    and ( a.children -> select (p | p.name = 'port') -> select ( p | p.attribute('type').value = 'out').size() = 1 )
+	 								  ) -> select ( a | thisModule.actorsWithInitialTokens -> excludes(a.attribute('name').value) ) ;
+
+-- case8: actor with one output and one or multiple input with initial tokens on channels initiated from output --> comb process + delay
+
+helper def: case8: Sequence(XML!Element) = 
+	thisModule.systemActors -> select ( a | ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'in').size() > 0 ) 
+									    and ( a.children -> select (p | p.name = 'port') -> select ( p | p.attribute('type').value = 'out').size() = 1 )
+	 								  ) -> select ( a | thisModule.actorsWithInitialTokens -> includes(a.attribute('name').value) ) ;
+
+-- case9: actor with multiple output and one or multiple input without initial tokens on channels initiated from output --> comb process + unzipN
+
+helper def: case9: Sequence(XML!Element) = 
+	thisModule.systemActors -> select ( a | ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'in').size() > 0 ) 
+									    and ( a.children -> select (p | p.name = 'port') -> select ( p | p.attribute('type').value = 'out').size() > 1 )
+	 								  ) -> select ( a | thisModule.actorsWithInitialTokens -> excludes(a.attribute('name').value) ) ;
+
+-- case10: actor with multiple output and one or multiple input with initial tokens on channels initiated from output --> comb process + unzipN + delay
+
+helper def: case10: Sequence(XML!Element) = 
+	thisModule.systemActors -> select ( a | ( a.children -> select (p | p.name = 'port') -> select (p | p.attribute('type').value = 'in').size() > 0 ) 
+									    and ( a.children -> select (p | p.name = 'port') -> select ( p | p.attribute('type').value = 'out').size() > 1 )
+	 								  ) -> select ( a | thisModule.actorsWithInitialTokens -> includes(a.attribute('name').value) ) ;
+
+

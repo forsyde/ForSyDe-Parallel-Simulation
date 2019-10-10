@@ -36,10 +36,10 @@ def getbindings(port):
     return bound
 
 def gensynactor(cp):
-    output = open('{}/{}.hpp'.format(outfolder, cp.attrib['component_name']),'w')
+    output = open('{}/{}_{}.hpp'.format(outfolder, cp.attrib['name'], cp.attrib['component_name']),'w')
     inpports = cp.findall("port/[@direction='in']")
     outports = cp.findall("port/[@direction='out']")
-    output.write('#ifndef {0}_HPP\n#define {0}_HPP\n'.format(cp.attrib['component_name'].upper()))
+    output.write('#ifndef {0}_{1}_HPP\n#define {0}_{1}_HPP\n'.format(cp.attrib['name'].upper(),cp.attrib['component_name'].upper()))
     output.write('#include "forsyde.hpp"\n')
     output.write('using namespace std;\n')
     # generate the synthetic function
@@ -49,9 +49,9 @@ def gensynactor(cp):
     fotype = 'vector<{}>&'.format(outports[0].attrib['type'] if len(outports)==1 else
         'tuple<{}>'.format(','.join('vector<{}>'.format(p.attrib['type']) for p in outports))
     )
-    output.write('void {}_leaf_func ({} out1, {} inp1) {{}}\n'.format(cp.attrib['component_name'],fotype,fitype))
+    output.write('void {}_{}_leaf_func ({} out1, {} inp1) {{}}\n'.format(cp.attrib['name'],cp.attrib['component_name'],fotype,fitype))
     # generate the synthetic module 
-    output.write('SC_MODULE({}) {{\n'.format(cp.attrib['component_name']))
+    output.write('SC_MODULE({}_{}) {{\n'.format(cp.attrib['name'],cp.attrib['component_name']))
     for port in cp.findall('port'):
         output.write('\tForSyDe::{}::{}_port<{}> {};\n'.format(
             port.attrib['moc'].upper(),
@@ -82,7 +82,7 @@ def gensynactor(cp):
         output.write('\tForSyDe::SDF::signal< tuple<{}> > zo;\n'.format(
             ','.join('vector<{}>'.format(p.attrib['type']) for p in outports)
         ))
-    output.write('\tSC_CTOR({}) {{\n'.format(cp.attrib['component_name']))
+    output.write('\tSC_CTOR({}_{}) {{\n'.format(cp.attrib['name'],cp.attrib['component_name']))
     
     if len(inpports)>1:
         output.write('\t\tauto zip1 = new ForSyDe::SDF::zipN<{}>("zip1",{});\n'.format(
@@ -93,12 +93,13 @@ def gensynactor(cp):
             output.write('\t\tget<{}>(zip1->iport)({});\n'.format(i,port.attrib['name']))
         output.write('\t\tzip1->oport1(zi);\n')
 
-    output.write('\t\tForSyDe::SDF::make_comb("{0}_leaf", {0}_leaf_func, {1}, {2}, {3}, {4});\n'.format(
+    output.write('\t\tForSyDe::SDF::make_comb("{5}_{0}_leaf", {5}_{0}_leaf_func, {1}, {2}, {3}, {4});\n'.format(
             cp.attrib['component_name'],
             '1' if len(outports)>1 else cp.attrib['otoks'][1:-1],
             '1' if len(inpports)>1 else cp.attrib['itoks'][1:-1],
             'zo' if len(outports)>1 else outports[0].attrib['name'],
-            'zi' if len(inpports)>1 else inpports[0].attrib['name']
+            'zi' if len(inpports)>1 else inpports[0].attrib['name'],
+            cp.attrib['name'],
         ))
 
     if len(outports)>1:
@@ -126,7 +127,7 @@ for cp in inproot.findall('composite_process'):
             gensynactor(cp)
         else:
             subprocess.call(['python {} {} {}'.format(sys.argv[0],os.path.dirname(sys.argv[1])+'/'+cp.attrib['component_name']+'.xml',sys.argv[2])], shell=True)
-    output.write('#include "{}.hpp"\n'.format(cp.attrib['component_name']))
+    output.write('#include "{}_{}.hpp"\n'.format(cp.attrib['name'],cp.attrib['component_name']))
 # include leaf process definitions
 for lp in inproot.findall('leaf_process'):
     for pcarg in lp.findall('process_constructor/argument'):
@@ -182,7 +183,7 @@ for lp in inproot.findall('leaf_process'):
                 ))
 # top-level composites
 for cp in inproot.findall('composite_process'):
-    output.write('\tauto {0} = new {1}("{0}");\n'.format(
+    output.write('\tauto {0} = new {0}_{1}("{0}");\n'.format(
         cp.attrib['name'],
         cp.attrib['component_name']
     ))

@@ -90,16 +90,29 @@ subprocess.call(['python partition-forsyde.py {0}/forsyde_{1}.xml {2} {0}/{1}.ma
 print ('Generating source codes for the partitioned model...')
 subprocess.call(['mkdir -p {0}/{1}.map.{2}-src'.format(args.outputfolder,num_processes,num_processors)], shell=True)
 copy(TEMPLATE_PATH+'/Makefile.defs','{0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors))
-# subprocess.call(['cp {3}/Makefile.defs {0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors,TEMPLATE_PATH)])
-# print('cp {3}/Makefile {0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors,TEMPLATE_PATH))
-# subprocess.call(['cp {3}/Makefile {0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors,TEMPLATE_PATH)])
 copy(TEMPLATE_PATH+'/Makefile','{0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors))
 for i in range(int(num_processors)):
 	subprocess.call(['mkdir -p {0}/{1}.map.{2}-src/forsyde_{1}_{3}'.format(args.outputfolder,num_processes,num_processors,i)], shell=True)
-	# subprocess.call(['cp {4}/Makefile-sub {0}/{1}.map.{2}-src/forsyde_{1}_{3}/Makefile'.format(args.outputfolder,num_processes,num_processors,i,TEMPLATE_PATH)])
 	copy(TEMPLATE_PATH+'/Makefile-sub','{0}/{1}.map.{2}-src/forsyde_{1}_{3}/Makefile'.format(args.outputfolder,num_processes,num_processors,i))
 	if args.apptype=='synthetic':
 		subprocess.call(['python forsyde-systemc-codegen.py {0}/{1}.map.{2}/forsyde_{1}_{3}.xml {0}/{1}.map.{2}-src/forsyde_{1}_{3} -m -r -s'.format(args.outputfolder,num_processes,num_processors,i)], shell=True)
 	else:
 		subprocess.call(['python forsyde-systemc-codegen.py {0}/{1}.map.{2}/forsyde_{1}_{3}.xml {0}/{1}.map.{2}-src/forsyde_{1}_{3} -m -r'.format(args.outputfolder,num_processes,num_processors,i)], shell=True)
+
+#invoke make
+subprocess.call(['make -j -C {0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors)], shell=True)
+
+# Deploy the MPI executables
+print ('Deploying the MPI executables...')
+subprocess.call(['mkdir -p {0}/{1}.map.{2}-deploy'.format(args.outputfolder,num_processes,num_processors)], shell=True)
+output = open('{0}/{1}.map.{2}-deploy/appfile'.format(args.outputfolder,num_processes,num_processors),'w')
+for i in range(int(num_processors)):
+	copy('{0}/{1}.map.{2}-src/forsyde_{1}_{3}/run.x'.format(args.outputfolder,num_processes,num_processors,i),
+	'{0}/{1}.map.{2}-deploy/forsyde_{1}_{3}'.format(args.outputfolder,num_processes,num_processors,i))
+	output.write('-np 1 forsyde_{0}_{1}\n'.format(num_processes,i))
+output.close()
+
+# Run the MPI job
+print ('Running the MPI job...')
+subprocess.call(['mpiexec --app appfile'], cwd='{0}/{1}.map.{2}-deploy'.format(args.outputfolder,num_processes,num_processors), shell=True)
 

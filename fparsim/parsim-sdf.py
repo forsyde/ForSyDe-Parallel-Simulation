@@ -3,9 +3,11 @@ import subprocess
 import sys
 import argparse
 from os.path import basename
+from shutil import copy
 
 SDF_PATH = '/home/shaniaki/Downloads/sdf3/build/release/Linux/bin/'
 PAGRID_PLATFORM = '~/Downloads/PaGridL/Example/cpu.grid'
+TEMPLATE_PATH = '../templates'
 
 parser = argparse.ArgumentParser(description='The ForSyDe Parallel & Distributed Simulation Flow')
 parser.add_argument('apptype', choices=['real', 'synthetic'], help='An introspected output of a real application or a generated synthetic one')
@@ -23,6 +25,9 @@ args = parser.parse_args()
 #num_processes = sys.argv[1];
 #num_processors = sys.argv[2];
 
+if args.outputfolder is None:
+	args.outputfolder = "../examples"
+
 # set number of actors in sdf.opt
 if args.apptype=='synthetic':
 	if args.numprocesses is None:
@@ -31,14 +36,14 @@ if args.apptype=='synthetic':
 	else:
 		num_processes = str(args.numprocesses)
 
-	with open('sdf3-template.opt') as f:
+	with open(TEMPLATE_PATH + '/sdf3-template.opt') as f:
 	    newText=f.read().replace('_num_processes_', num_processes)
-	with open('sdf3.opt', "w") as f:
+	with open(args.outputfolder+'/sdf3.opt', "w") as f:
 	    f.write(newText)
 
 	# Generate SDF3
 	print ('Generating the SDF graph...')
-	subprocess.call([SDF_PATH + 'sdf3generate-sdf --settings sdf3.opt --output {}/{}.xml'.format(args.outputfolder,num_processes)], shell=True)
+	subprocess.call([SDF_PATH + 'sdf3generate-sdf --settings {0}/sdf3.opt --output {0}/{1}.xml'.format(args.outputfolder,num_processes)], shell=True)
 
 	# Convert to Metis Format
 	print ('Converting to Metis graph format...')
@@ -81,11 +86,18 @@ print ('Partitioning the model...')
 subprocess.call(['mkdir -p {0}/{1}.map.{2}'.format(args.outputfolder,num_processes,num_processors)], shell=True)
 subprocess.call(['python partition-forsyde.py {0}/forsyde_{1}.xml {2} {0}/{1}.map.{2}.xml {0}/{1}.map.{2}'.format(args.outputfolder,num_processes,num_processors)], shell=True)
 
-# Generate SystemC codes
+# Generate SystemC projects
 print ('Generating source codes for the partitioned model...')
 subprocess.call(['mkdir -p {0}/{1}.map.{2}-src'.format(args.outputfolder,num_processes,num_processors)], shell=True)
+copy(TEMPLATE_PATH+'/Makefile.defs','{0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors))
+# subprocess.call(['cp {3}/Makefile.defs {0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors,TEMPLATE_PATH)])
+# print('cp {3}/Makefile {0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors,TEMPLATE_PATH))
+# subprocess.call(['cp {3}/Makefile {0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors,TEMPLATE_PATH)])
+copy(TEMPLATE_PATH+'/Makefile','{0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors))
 for i in range(int(num_processors)):
 	subprocess.call(['mkdir -p {0}/{1}.map.{2}-src/forsyde_{1}_{3}'.format(args.outputfolder,num_processes,num_processors,i)], shell=True)
+	# subprocess.call(['cp {4}/Makefile-sub {0}/{1}.map.{2}-src/forsyde_{1}_{3}/Makefile'.format(args.outputfolder,num_processes,num_processors,i,TEMPLATE_PATH)])
+	copy(TEMPLATE_PATH+'/Makefile-sub','{0}/{1}.map.{2}-src/forsyde_{1}_{3}/Makefile'.format(args.outputfolder,num_processes,num_processors,i))
 	if args.apptype=='synthetic':
 		subprocess.call(['python forsyde-systemc-codegen.py {0}/{1}.map.{2}/forsyde_{1}_{3}.xml {0}/{1}.map.{2}-src/forsyde_{1}_{3} -m -r -s'.format(args.outputfolder,num_processes,num_processors,i)], shell=True)
 	else:

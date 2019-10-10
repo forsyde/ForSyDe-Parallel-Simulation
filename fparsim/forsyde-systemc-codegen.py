@@ -39,6 +39,7 @@ def gensynactor(cp):
     output = open('{}/{}.hpp'.format(outfolder, cp.attrib['component_name']),'w')
     inpports = cp.findall("port/[@direction='in']")
     outports = cp.findall("port/[@direction='out']")
+    output.write('#ifndef {0}_HPP\n#define {0}_HPP\n'.format(cp.attrib['component_name'].upper()))
     output.write('#include "forsyde.hpp"\n')
     output.write('using namespace std;\n')
     # generate the synthetic function
@@ -109,6 +110,7 @@ def gensynactor(cp):
         for i,port in enumerate(outports):
             output.write('\t\tget<{}>(unzip1->oport)({});\n'.format(i,port.attrib['name']))
     output.write('}\n};\n')
+    output.write('#endif\n')
     output.close()
 
 output = open('{}/{}.hpp'.format(outfolder, inproot.attrib['name']),'w')
@@ -219,7 +221,9 @@ if '-m' in sys.argv:
     output = open('{}/main.cpp'.format(outfolder),'w')
     output.write('#include "{}.hpp"\n'.format(inproot.attrib['name']))
     output.write('int sc_main(int argc, char **argv) {\n')
+    output.write('MPI_Init (&argc, &argv);\n')
     output.write('\t{0} top1("{0}1");\n\n'.format(inproot.attrib['name']))
     output.write('\tsc_core::sc_start();\n\n')
+    output.write('MPI_Finalize();\n')
     output.write('\treturn 0;\n')
     output.write('}\n')

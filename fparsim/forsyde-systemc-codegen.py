@@ -4,14 +4,21 @@ import os
 import subprocess
 import xml.etree.ElementTree as ET
 
+SIGNAL_DEPTH = 100
+
 # Input ForSyDe model
 tree = ET.parse(sys.argv[1])
 
+# Input model characteristics
+ctree = ET.parse(sys.argv[2])
+
 # Output folder
-outfolder = sys.argv[2]
+outfolder = sys.argv[3]
 
 inproot = tree.getroot()
 inparent = {c:p for p in inproot.iter() for c in p}
+
+inpcharroot = ctree.getroot()
 
 def getbindings(port):
     bound = None
@@ -49,7 +56,16 @@ def gensynactor(cp):
     fotype = 'vector<{}>&'.format(outports[0].attrib['type'] if len(outports)==1 else
         'tuple<{}>'.format(','.join('vector<{}>'.format(p.attrib['type']) for p in outports))
     )
-    output.write('void {}_{}_leaf_func ({} out1, {} inp1) {{}}\n'.format(cp.attrib['name'],cp.attrib['component_name'],fotype,fitype))
+    otoks = cp.attrib['otoks'][1:-1].split(',')
+    output.write('void {}_{}_leaf_func ({} out1, {} inp1) {{\n{}\n{}\n}}\n'.format(
+        cp.attrib['name'],
+        cp.attrib['component_name'],fotype,fitype,
+        'static int i=0;volatile int j,k;\nfor(j=0;j<{};j++)for(k=0;k<10000000;k++); std::cout<<"from: {} iter: "<<i++<<std::endl;\n'.format(
+            inpcharroot.find("Element[@process='{}']".format(cp.attrib['name'])).attrib['executionTime'],
+            cp.attrib['name']
+            ),
+        '\n'.join('get<{}>(out1[0]).resize({});'.format(i,otok) for i,otok in enumerate(otoks)) if len(otoks)>1 else ''
+        ))
     # generate the synthetic module 
     output.write('SC_MODULE({}_{}) {{\n'.format(cp.attrib['name'],cp.attrib['component_name']))
     for port in cp.findall('port'):
@@ -59,20 +75,6 @@ def gensynactor(cp):
             port.attrib['type'],
             port.attrib['name']
         ))
-    for port in inpports:
-        if len(inpports)>1:
-            output.write('\tForSyDe::{}::signal<{}> {}_sig;\n'.format(
-                port.attrib['moc'].upper(),
-                port.attrib['type'],
-                port.attrib['name']
-            ))
-    for port in outports:
-        if len(outports)>1:
-            output.write('\tForSyDe::{}::signal<{}> {}_sig;\n'.format(
-                port.attrib['moc'].upper(),
-                port.attrib['type'],
-                port.attrib['name']
-            ))
     # TODO: define two zipper signals zi, zo
     if len(inpports)>1:
         output.write('\tForSyDe::SDF::signal< tuple<{}> > zi;\n'.format(
@@ -153,7 +155,10 @@ for sig in inproot.findall('signal'):
         sig.attrib['name']
     ))
 # the constructor
-output.write('SC_CTOR({}) {{\n'.format(inproot.attrib['name']))
+output.write('SC_CTOR({}){} {{\n'.format(
+    inproot.attrib['name'],
+    '' if inproot.find('signal') is None else ': '+','.join('{0}("{0}",{1})'.format(sig.attrib['name'],SIGNAL_DEPTH) for sig in inproot.findall('signal'))
+    ))
 # top-level leaves
 for lp in inproot.findall('leaf_process'):
     # output.write('\tauto {} = new ForSyDe::{}::{}({});\n'.format(

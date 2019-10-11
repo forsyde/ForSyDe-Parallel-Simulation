@@ -45,6 +45,10 @@ if args.apptype=='synthetic':
 	print ('Generating the SDF graph...')
 	subprocess.call([SDF_PATH + 'sdf3generate-sdf --settings {0}/sdf3.opt --output {0}/{1}.xml'.format(args.outputfolder,num_processes)], shell=True)
 
+	# Extract application characteristics
+	print ('Extracting application characteristics...')
+	subprocess.call(['python ExecutionTimeFromSDF3.py {0}/{1}.xml {0}/{1}-charasteristics.xml'.format(args.outputfolder,num_processes)], shell=True)
+	
 	# Convert to Metis Format
 	print ('Converting to Metis graph format...')
 	subprocess.call(['python sdf3-to-metis.py {0}/{1}.xml {0}/{1}.metis'.format(args.outputfolder,num_processes)], shell=True)
@@ -95,9 +99,9 @@ for i in range(int(num_processors)):
 	subprocess.call(['mkdir -p {0}/{1}.map.{2}-src/forsyde_{1}_{3}'.format(args.outputfolder,num_processes,num_processors,i)], shell=True)
 	copy(TEMPLATE_PATH+'/Makefile-sub','{0}/{1}.map.{2}-src/forsyde_{1}_{3}/Makefile'.format(args.outputfolder,num_processes,num_processors,i))
 	if args.apptype=='synthetic':
-		subprocess.call(['python forsyde-systemc-codegen.py {0}/{1}.map.{2}/forsyde_{1}_{3}.xml {0}/{1}.map.{2}-src/forsyde_{1}_{3} -m -r -s'.format(args.outputfolder,num_processes,num_processors,i)], shell=True)
+		subprocess.call(['python forsyde-systemc-codegen.py {0}/{1}.map.{2}/forsyde_{1}_{3}.xml {0}/{1}-charasteristics.xml {0}/{1}.map.{2}-src/forsyde_{1}_{3} -m -r -s'.format(args.outputfolder,num_processes,num_processors,i)], shell=True)
 	else:
-		subprocess.call(['python forsyde-systemc-codegen.py {0}/{1}.map.{2}/forsyde_{1}_{3}.xml {0}/{1}.map.{2}-src/forsyde_{1}_{3} -m -r'.format(args.outputfolder,num_processes,num_processors,i)], shell=True)
+		subprocess.call(['python forsyde-systemc-codegen.py {0}/{1}.map.{2}/forsyde_{1}_{3}.xml {0}/{1}-charasteristics.xml {0}/{1}.map.{2}-src/forsyde_{1}_{3} -m -r'.format(args.outputfolder,num_processes,num_processors,i)], shell=True)
 
 #invoke make
 subprocess.call(['make -j -C {0}/{1}.map.{2}-src/'.format(args.outputfolder,num_processes,num_processors)], shell=True)

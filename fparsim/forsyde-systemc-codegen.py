@@ -60,7 +60,7 @@ def gensynactor(cp):
     output.write('void {}_{}_leaf_func ({} out1, {} inp1) {{\n{}\n{}\n}}\n'.format(
         cp.attrib['name'],
         cp.attrib['component_name'],fotype,fitype,
-        'static int i=0;volatile int j,k;\nfor(j=0;j<{};j++)for(k=0;k<10000000;k++); std::cout<<"from: {} iter: "<<i++<<std::endl;\n'.format(
+        'static int i=0;volatile int j,k;\nfor(j=0;j<{};j++)for(k=0;k<1000000;k++); std::cout<<"from: {} iter: "<<i++<<std::endl;\n'.format(
             inpcharroot.find("Element[@process='{}']".format(cp.attrib['name'])).attrib['executionTime'],
             cp.attrib['name']
             ),

@@ -72,9 +72,11 @@ solve :: seq_search([
       minimize (max(exec_cost));
 
 %% printing
-output ["mis={"]
-    ++ [show(m[i])++if i<N then "," else "" endif|i in 1..N]
-    ++ ["};\n"]
-    ++ ["partitions=" ++ show(x) ++ "};\n"]
-    ++ ["cost = " ++ show(max(exec_cost))]
-    ++ [" epsilon: " ++ show(epsilon/100)];
+% output ["mis={"]
+%     ++ [show(m[i])++if i<N then "," else "" endif|i in 1..N]
+%     ++ ["};\n"]
+%     ++ ["partitions=" ++ show(x) ++ "};\n"]
+%     ++ ["cost = " ++ show(max(exec_cost))]
+%     ++ [" epsilon: " ++ show(epsilon/100)];
+%% printing machine readable
+output [show(m[i]-1)++"\n"|i in 1..N];

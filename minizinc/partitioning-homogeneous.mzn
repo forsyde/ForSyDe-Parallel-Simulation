@@ -63,10 +63,12 @@ solve :: seq_search([
 %       :: restart_luby(10)
       minimize (comm_cost);
 
-%% printing
-output ["mis={"]
-    ++ [show(m[i])++if i<N then "," else "" endif|i in 1..N]
-    ++ ["};\n"]
-    ++ ["partitions=" ++ show(x) ++ "};\n"]
-    ++ ["cost = " ++ show(comm_cost)]
-    ++ [" epsilon: " ++ show(epsilon/100)];
+%% printing human readable
+%output ["mis={"]
+%    ++ [show(m[i])++if i<N then "," else "" endif|i in 1..N]
+%    ++ ["};\n"]
+%    ++ ["partitions=" ++ show(x) ++ "};\n"]
+%    ++ ["cost = " ++ show(comm_cost)]
+%    ++ [" epsilon: " ++ show(epsilon/100)];
+%% printing machine readable
+output [show(m[i]-1)++"\n"|i in 1..N];

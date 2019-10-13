@@ -9,6 +9,8 @@ output = open(sys.argv[2],'w')
 tree = ET.parse(sys.argv[1])
 #tree = ET.parse('file2.xml')
 
+numprocessors = sys.argv[3]
+
 root = tree.getroot()
 nodeNumber = 0
 channelNumber = 0
@@ -38,7 +40,7 @@ for channel in root.iter('channel') :
                         root[0][0].remove(channels)
 
 
-output.write("M = 4 ;" + "\n")
+output.write('M = {};\n'.format(numprocessors))
 output.write("N = " + str(nodeNumber) + ';' + " \n")
 exectimeStr = ""
 for act in root.iter('actor') :

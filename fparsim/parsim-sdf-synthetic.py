@@ -6,7 +6,7 @@ from os.path import basename
 from shutil import copy
 
 SDF_PATH = '~/Downloads/sdf3/build/release/Linux/bin/'
-PAGRID_PLATFORM = '~/Downloads/PaGridL/Example/cpu.grid'
+# PAGRID_PLATFORM = '~/Downloads/PaGridL/Example/cpu.grid'
 TEMPLATE_PATH = '../templates'
 MINIZINC_PATH = '~/Downloads/MiniZincIDE-2.3.2-bundle-linux/bin/'
 
@@ -15,6 +15,8 @@ parser.add_argument('partitioner', choices=['metis', 'pagrid', 'cp-homo', 'cp-he
 parser.add_argument('-n', '--numprocesses', type=int, help='For synthetic applications, the number of application nodes')
 parser.add_argument('-p', '--numprocessors', type=int, help='For simple homogeneous architectures, the number of processors')
 parser.add_argument('-o', '--outputfolder', type=str, help='The output folder where the generated files reside')
+parser.add_argument('-g', '--pagridplatform', type=str, help='The PaGrid platform specification file (if used)')
+parser.add_argument('-t', '--heteroplatform', type=str, help='The CP-based heterogeneous platform specification file (if used)')
 args = parser.parse_args()
 
 if args.outputfolder is None:
@@ -65,12 +67,17 @@ elif args.partitioner=='cp-homo':
 		num_processors = str(args.numprocessors)
 	
 	# Convert graph to the Zinc data file
-	print ('Converting to the Zinc data format...')
-	subprocess.call(['python sdf3-to-dzn.py {0}/{1}.xml {0}/{1}.dzn {2}'.format(args.outputfolder,num_processes,num_processors)], shell=True)
+	print ('Converting to the Zinc application data format...')
+	subprocess.call(['python sdf3-to-dzn.py {0}/{1}.xml {0}/app-{1}.dzn'.format(args.outputfolder,num_processes)], shell=True)
+
+	# Generate platform Zinc data file
+	print ('Generating the Zinc platform data format...')
+	with open('{0}/plat-{1}.dzn'.format(args.outputfolder,num_processors), 'w') as f:
+		f.write('M={};\n'.format(num_processors))
 
 	# Invoke Minizinc for Homogeneous Partitioning
 	print ('Invoking the MiniZinc CP model for homogeneous partitioning...')
-	subprocess.call([MINIZINC_PATH+'minizinc --solver OR-Tools ../minizinc/partitioning-homogeneous.mzn {0}/{1}.dzn -o {0}/{1}.cp-homo.part.{2}-raw -p 8 -t 30000'.format(args.outputfolder,num_processes,num_processors)], shell=True)
+	subprocess.call([MINIZINC_PATH+'minizinc --solver OR-Tools ../minizinc/partitioning-homogeneous.mzn {0}/app-{1}.dzn {0}/plat-{2}.dzn -o {0}/{1}.cp-homo.part.{2}-raw -p 8 -t 30000'.format(args.outputfolder,num_processes,num_processors)], shell=True)
 
 	# strip the last two lines
 	with open('{0}/{1}.cp-homo.part.{2}-raw'.format(args.outputfolder,num_processes,num_processors)) as f1:
@@ -82,17 +89,53 @@ elif args.partitioner=='cp-homo':
 	subprocess.call(['python partitions-to-xml.py {0}/{1}.cp-homo.part.{2} {0}/{1}.map.{2}.xml {0}/{1}.xml'.format(args.outputfolder,num_processes,num_processors)], shell=True)
 
 elif args.partitioner=='pagrid':
-	if PAGRID_PLATFORM is None:
+	if args.pagridplatform is None:
 		print ('Must provide the PaGrid platform file for partitioning a synthetic application with PaGrid')
 		sys.exit()
 	else:
-		num_processors = 8#basename(PAGRID_PLATFORM)
+		for line in open(args.pagridplatform):
+			print(line,line.split()[0])
+			if not line.startswith('%'):
+				num_processors = line.split()[0]
+				break
+
 	# Invoke Pagrid
 	print ('Partioning with Pagrid...')
-	subprocess.call(['pagrid {0}/{1}.metis {2}'.format(args.outputfolder,num_processes,PAGRID_PLATFORM)], shell=True)
+	subprocess.call(['pagrid {0}/{1}.metis {2}'.format(args.outputfolder,num_processes,args.pagridplatform)], shell=True)
 
 	# Convert to partitions to XML
-	subprocess.call(['python partitions-to-xml.py {1}.metis.cpu.grid.result {0}/{1}.map.{2}.xml'.format(args.outputfolder,num_processes,num_processors)], shell=True)	
+	subprocess.call(['python partitions-to-xml.py {1}.metis.cpu.grid.result {0}/{1}.map.{2}.xml {0}/{1}.xml'.format(args.outputfolder,num_processes,num_processors)], shell=True)	
+
+elif args.partitioner=='cp-hetero':
+	if args.heteroplatform is None:
+		print ('Must provide the CP-based heterogeneous platform file for partitioning a synthetic application with Minizinc')
+		sys.exit()
+	else:
+		for line in open(args.heteroplatform):
+			if not line.startswith('%'):
+				num_processors = line.split()[0]
+				break
+
+	# Convert graph to the Zinc data file
+	print ('Converting to the Zinc application data format...')
+	subprocess.call(['python sdf3-to-dzn.py {0}/{1}.xml {0}/app-{1}.dzn'.format(args.outputfolder,num_processes)], shell=True)
+
+	# Generate platform Zinc data file
+	subprocess.call(['python grid-to-dzn.py {2} {0}/plat-{1}.dzn'.format(args.outputfolder,num_processors,args.heteroplatform)], shell=True)
+
+	# Invoke Minizinc for Heterogeneous Partitioning
+	print ('Invoking the MiniZinc CP model for heterogeneous partitioning...')
+	subprocess.call([MINIZINC_PATH+'minizinc --solver OR-Tools ../minizinc/partitioning-heterogeneous.mzn {0}/app-{1}.dzn {0}/plat-{2}.dzn -o {0}/{1}.cp-hetero.part.{2}-raw -p 8 -t 30000'.format(args.outputfolder,num_processes,num_processors)], shell=True)
+
+	# strip the last two lines
+	with open('{0}/{1}.cp-hetero.part.{2}-raw'.format(args.outputfolder,num_processes,num_processors)) as f1:
+		lines = f1.readlines()
+	with open('{0}/{1}.cp-hetero.part.{2}'.format(args.outputfolder,num_processes,num_processors), 'w') as f2:
+		f2.writelines(lines[:-2])
+
+	# Convert partitions to XML
+	subprocess.call(['python partitions-to-xml.py {0}/{1}.cp-hetero.part.{2} {0}/{1}.map.{2}.xml {0}/{1}.xml'.format(args.outputfolder,num_processes,num_processors)], shell=True)
+
 	
 # Convert the sequential model to ForSyDe-XML
 print ('Converting the model to ForSyDe-XML...')

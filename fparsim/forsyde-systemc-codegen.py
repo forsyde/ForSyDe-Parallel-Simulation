@@ -57,14 +57,17 @@ def gensynactor(cp):
         'tuple<{}>'.format(','.join('vector<{}>'.format(p.attrib['type']) for p in outports))
     )
     otoks = cp.attrib['otoks'][1:-1].split(',')
-    output.write('void {}_{}_leaf_func ({} out1, {} inp1) {{\n{}\n{}\n}}\n'.format(
+    output.write('void {}_{}_leaf_func ({} out1, {} inp1) {{\n{}\n{}\n{}\n}}\n'.format(
         cp.attrib['name'],
-        cp.attrib['component_name'],fotype,fitype,
+        cp.attrib['component_name'],
+        fotype,
+        fitype,
         'static int i=0;volatile int j,k;\nfor(j=0;j<{};j++)for(k=0;k<1000000;k++); std::cout<<"from: {} iter: "<<i++<<std::endl;\n'.format(
             inpcharroot.find("Element[@process='{}']".format(cp.attrib['name'])).attrib['executionTime'],
             cp.attrib['name']
             ),
-        '\n'.join('get<{}>(out1[0]).resize({});'.format(i,otok) for i,otok in enumerate(otoks)) if len(otoks)>1 else ''
+        '\n'.join('get<{}>(out1[0]).resize({});'.format(i,otok) for i,otok in enumerate(otoks)) if len(otoks)>1 else '',
+        'if (i>10) MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);' if inproot.findall('composite_process')[-1].attrib['name'] == cp.attrib['name'] else ''
         ))
     # generate the synthetic module 
     output.write('SC_MODULE({}_{}) {{\n'.format(cp.attrib['name'],cp.attrib['component_name']))

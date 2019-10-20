@@ -43,6 +43,7 @@ def getbindings(port):
     return bound
 
 def gensynactor(cp):
+    sink_node = sys.argv[-1]
     output = open('{}/{}_{}.hpp'.format(outfolder, cp.attrib['name'], cp.attrib['component_name']),'w')
     inpports = cp.findall("port/[@direction='in']")
     outports = cp.findall("port/[@direction='out']")
@@ -67,7 +68,7 @@ def gensynactor(cp):
             cp.attrib['name']
             ),
         '\n'.join('get<{}>(out1[0]).resize({});'.format(i,otok) for i,otok in enumerate(otoks)) if len(otoks)>1 else '',
-        'if (i>10) MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);' if inproot.findall('composite_process')[-1].attrib['name'] == cp.attrib['name'] else ''
+        'if (i>10) MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);' if sink_node == cp.attrib['name'] else ''
         ))
     # generate the synthetic module 
     output.write('SC_MODULE({}_{}) {{\n'.format(cp.attrib['name'],cp.attrib['component_name']))

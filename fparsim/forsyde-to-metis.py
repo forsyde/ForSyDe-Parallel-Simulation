@@ -13,10 +13,10 @@ tree = ET.parse(sys.argv[1])
 root = tree.getroot()
 nodeNumber = 0
 channelNumber = 0
-for channel in root.iter('channel') :
-    for channels in root.iter('channel') :
+for channel in root.iter('signal') :
+    for channels in root.iter('signal') :
         if channel != channels :
-            if ((channel.attrib["srcActor"] == channels.attrib["dstActor"]) and (channel.attrib["dstActor"] == channels.attrib["srcActor"])) :
+            if ((channel.attrib["source"] == channels.attrib["target"]) and (channel.attrib["target"] == channels.attrib["source"])) :
                 secondSize = 0
                 firstSize = 0
                 for chp in root.iter('channelProperties') :

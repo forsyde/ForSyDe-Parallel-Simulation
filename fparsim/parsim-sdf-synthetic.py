@@ -89,7 +89,11 @@ elif args.partitioner=='cp-homo':
 	with open('{0}/{1}.cp-homo.part.{2}-raw'.format(args.outputfolder,num_processes,num_processors)) as f1:
 		lines = f1.readlines()
 	with open('{0}/{1}.cp-homo.part.{2}'.format(args.outputfolder,num_processes,num_processors), 'w') as f2:
-		f2.writelines(lines[:-2])
+		for line in lines:
+			if not (line.startswith('-') or line.startswith('=')):
+				f2.write(line)
+			else:
+				break
 	
 	# Convert partitions to XML
 	subprocess.call(['python partitions-to-xml.py {0}/{1}.cp-homo.part.{2} {0}/{1}.map.{2}.xml {0}/{1}.xml'.format(
@@ -147,7 +151,11 @@ elif args.partitioner=='cp-hetero':
 	with open('{0}/{1}.cp-hetero.part.{2}-raw'.format(args.outputfolder,num_processes,num_processors)) as f1:
 		lines = f1.readlines()
 	with open('{0}/{1}.cp-hetero.part.{2}'.format(args.outputfolder,num_processes,num_processors), 'w') as f2:
-		f2.writelines(lines[:-2])
+		for line in lines:
+			if not (line.startswith('-') or line.startswith('=')):
+				f2.write(line)
+			else:
+				break
 
 	# Convert partitions to XML
 	subprocess.call(['python partitions-to-xml.py {0}/{1}.cp-hetero.part.{2} {0}/{1}.map.{2}.xml {0}/{1}.xml'.format(
@@ -200,5 +208,5 @@ output.close()
 
 # Run the MPI job
 print ('Running the MPI job...')
-subprocess.call(['mpiexec --app appfile'], cwd='{0}/{1}.map.{2}-deploy'.format(args.outputfolder,num_processes,num_processors), shell=True)
+subprocess.call(['time mpiexec --app appfile'], cwd='{0}/{1}.map.{2}-deploy'.format(args.outputfolder,num_processes,num_processors), shell=True)
 

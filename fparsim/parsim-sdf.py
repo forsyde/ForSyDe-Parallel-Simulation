@@ -5,7 +5,7 @@ import argparse
 from os.path import basename
 from shutil import copy
 
-SDF_PATH = '/home/shaniaki/Downloads/sdf3/build/release/Linux/bin/'
+SDF_PATH = '~/Downloads/sdf3/build/release/Linux/bin/'
 TEMPLATE_PATH = '../templates'
 MINIZINC_PATH = '~/Downloads/MiniZincIDE-2.3.2-bundle-linux/bin/'
 
@@ -84,7 +84,11 @@ elif args.partitioner=='cp-homo':
 	with open('{0}/{1}.cp-homo.part.{2}-raw'.format(args.outputfolder,args.topname,num_processors)) as f1:
 		lines = f1.readlines()
 	with open('{0}/{1}.cp-homo.part.{2}'.format(args.outputfolder,args.topname,num_processors), 'w') as f2:
-		f2.writelines(lines[:-2])
+		for line in lines:
+			if not (line.startswith('-') or line.startswith('=')):
+				f2.write(line)
+			else:
+				break
 	
 	# Convert partitions to XML
 	subprocess.call(['python partitions-to-xml.py {0}/{1}.cp-homo.part.{2} {0}/{1}.map.{2}.xml {0}/{1}.xml'.format(
@@ -108,9 +112,10 @@ elif args.partitioner=='pagrid':
 	subprocess.call(['pagrid {0}/{1}.metis {2}'.format(args.outputfolder,args.topname,args.pagridplatform)], shell=True)
 
 	# Convert the partitions to XML
-	subprocess.call(['python partitions-to-xml.py {1}.metis.{3}.result {0}/{1}.map.{2}.xml'.format(
+	subprocess.call(['python partitions-to-xml.py {1}.metis.{3}.result {0}/{1}.map.{2}.xml {0}/{1}.xml'.format(
 		args.outputfolder,
 		args.topname,
+		num_processors,
 		basename(args.pagridplatform))], shell=True)
 
 elif args.partitioner=='cp-hetero':
@@ -132,13 +137,17 @@ elif args.partitioner=='cp-hetero':
 
 	# Invoke Minizinc for Heterogeneous Partitioning
 	print ('Invoking the MiniZinc CP model for heterogeneous partitioning...')
-	subprocess.call([MINIZINC_PATH+'minizinc --solver OR-Tools ../minizinc/partitioning-heterogeneous.mzn {0}/app-{1}.dzn {0}/plat-{2}.dzn -o {0}/{1}.cp-hetero.part.{2}-raw -p 8 -t 30000'.format(args.outputfolder,num_processes,num_processors)], shell=True)
+	subprocess.call([MINIZINC_PATH+'minizinc --solver OR-Tools ../minizinc/partitioning-heterogeneous.mzn {0}/app-{1}.dzn {0}/plat-{2}.dzn -o {0}/{1}.cp-hetero.part.{2}-raw -p 8 -t 30000'.format(args.outputfolder,args.topname,num_processors)], shell=True)
 
 	# strip the last two lines
 	with open('{0}/{1}.cp-hetero.part.{2}-raw'.format(args.outputfolder,args.topname,num_processors)) as f1:
 		lines = f1.readlines()
 	with open('{0}/{1}.cp-hetero.part.{2}'.format(args.outputfolder,args.topname,num_processors), 'w') as f2:
-		f2.writelines(lines[:-2])
+		for line in lines:
+			if not (line.startswith('-') or line.startswith('=')):
+				f2.write(line)
+			else:
+				break
 
 	# Convert partitions to XML
 	subprocess.call(['python partitions-to-xml.py {0}/{1}.cp-hetero.part.{2} {0}/{1}.map.{2}.xml {0}/{1}.xml'.format(

@@ -4,7 +4,7 @@
         <graph>
             <actors nr='_num_processes_'/>
             <degree avg='2' var='1' min='1' max='5'/>
-            <rate avg='2' var='1' min='1' max='5'/>
+            <rate avg='1' var='0' min='1' max='1'/>
             <initialTokens prop='0'/>
             <structure stronglyConnected='true' acyclic='false'/>
         </graph>

@@ -4,7 +4,7 @@ import os
 import subprocess
 import xml.etree.ElementTree as ET
 
-SIGNAL_DEPTH = 100
+SIGNAL_DEPTH = 2
 
 # Input ForSyDe model
 tree = ET.parse(sys.argv[1])
@@ -51,25 +51,56 @@ def gensynactor(cp):
     output.write('#include "forsyde.hpp"\n')
     output.write('using namespace std;\n')
     # generate the synthetic function
-    fitype = 'const vector<{}>&'.format(inpports[0].attrib['type'] if len(inpports)==1 else
-        'tuple<{}>'.format(','.join('vector<{}>'.format(p.attrib['type']) for p in inpports))
-    )
-    fotype = 'vector<{}>&'.format(outports[0].attrib['type'] if len(outports)==1 else
-        'tuple<{}>'.format(','.join('vector<{}>'.format(p.attrib['type']) for p in outports))
-    )
-    otoks = cp.attrib['otoks'][1:-1].split(',')
-    output.write('void {}_{}_leaf_func ({} out1, {} inp1) {{\n{}\n{}\n{}\n}}\n'.format(
-        cp.attrib['name'],
-        cp.attrib['component_name'],
-        fotype,
-        fitype,
-        'static int i=0;volatile int j,k;\nfor(j=0;j<{};j++)for(k=0;k<1000000;k++); std::cout<<"from: {} iter: "<<i++<<std::endl;\n'.format(
-            inpcharroot.find("Element[@process='{}']".format(cp.attrib['name'])).attrib['executionTime'],
-            cp.attrib['name']
-            ),
-        '\n'.join('get<{}>(out1[0]).resize({});'.format(i,otok) for i,otok in enumerate(otoks)) if len(otoks)>1 else '',
-        'if (i>10) MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);' if sink_node == cp.attrib['name'] else ''
-        ))
+    if len(inpports)==0:
+        fotype = '{}&'.format(outports[0].attrib['type'] if len(outports)==1 else
+            'tuple<{}>'.format(','.join('vector<{}>'.format(p.attrib['type']) for p in outports))
+        )
+        otoks = cp.attrib['otoks'][1:-1].split(',')
+        output.write('void {}_{}_leaf_func ({} out1, const {} inp1) {{\n{}\n{}\n}}\n'.format(
+            cp.attrib['name'],
+            cp.attrib['component_name'],
+            fotype,
+            fotype,
+            'static int i=0;volatile int j,k;\nfor(j=0;j<{};j++)for(k=0;k<1000000;k++); std::cout<<"from: {} iter: "<<i++<<std::endl;\n'.format(
+                inpcharroot.find("Element[@process='{}']".format(cp.attrib['name'])).attrib['executionTime'],
+                cp.attrib['name']
+                ),
+            '\n'.join('get<{}>(out1).resize({});'.format(i,otok) for i,otok in enumerate(otoks)) if len(otoks)>1 else ''
+            ))
+    elif len(outports)==0:
+        fitype = 'const {}&'.format(inpports[0].attrib['type'] if len(inpports)==1 else
+            'tuple<{}>'.format(','.join('vector<{}>'.format(p.attrib['type']) for p in inpports))
+        )
+        output.write('void {}_{}_leaf_func ({} inp1) {{\n{}\n{}\n}}\n'.format(
+            cp.attrib['name'],
+            cp.attrib['component_name'],
+            fitype,
+            'static int i=0;volatile int j,k;\nfor(j=0;j<{};j++)for(k=0;k<1000000;k++); std::cout<<"from: {} iter: "<<i++<<std::endl;\n'.format(
+                inpcharroot.find("Element[@process='{}']".format(cp.attrib['name'])).attrib['executionTime'],
+                cp.attrib['name']
+                ),
+            'if (i>=10) MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);' if sink_node == cp.attrib['name'] else ''
+            ))
+    else:
+        fitype = 'const vector<{}>&'.format(inpports[0].attrib['type'] if len(inpports)==1 else
+            'tuple<{}>'.format(','.join('vector<{}>'.format(p.attrib['type']) for p in inpports))
+        )
+        fotype = 'vector<{}>&'.format(outports[0].attrib['type'] if len(outports)==1 else
+            'tuple<{}>'.format(','.join('vector<{}>'.format(p.attrib['type']) for p in outports))
+        )
+        otoks = cp.attrib['otoks'][1:-1].split(',')
+        output.write('void {}_{}_leaf_func ({} out1, {} inp1) {{\n{}\n{}\n{}\n}}\n'.format(
+            cp.attrib['name'],
+            cp.attrib['component_name'],
+            fotype,
+            fitype,
+            'static int i=0;volatile int j,k;\nfor(j=0;j<{};j++)for(k=0;k<1000000;k++); std::cout<<"from: {} iter: "<<i++<<std::endl;\n'.format(
+                inpcharroot.find("Element[@process='{}']".format(cp.attrib['name'])).attrib['executionTime'],
+                cp.attrib['name']
+                ),
+            '\n'.join('get<{}>(out1[0]).resize({});'.format(i,otok) for i,otok in enumerate(otoks)) if len(otoks)>1 else '',
+            'if (i>=10) MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);' if sink_node == cp.attrib['name'] else ''
+            ))
     # generate the synthetic module 
     output.write('SC_MODULE({}_{}) {{\n'.format(cp.attrib['name'],cp.attrib['component_name']))
     for port in cp.findall('port'):
@@ -99,14 +130,27 @@ def gensynactor(cp):
             output.write('\t\tget<{}>(zip1->iport)({});\n'.format(i,port.attrib['name']))
         output.write('\t\tzip1->oport1(zi);\n')
 
-    output.write('\t\tForSyDe::SDF::make_comb("{5}_{0}_leaf", {5}_{0}_leaf_func, {1}, {2}, {3}, {4});\n'.format(
-            cp.attrib['component_name'],
-            '1' if len(outports)>1 else cp.attrib['otoks'][1:-1],
-            '1' if len(inpports)>1 else cp.attrib['itoks'][1:-1],
-            'zo' if len(outports)>1 else outports[0].attrib['name'],
-            'zi' if len(inpports)>1 else inpports[0].attrib['name'],
-            cp.attrib['name'],
-        ))
+    if len(inpports)==0:
+        output.write('\t\tForSyDe::SDF::make_source("{2}_{0}_leaf", {2}_{0}_leaf_func, {{}}, 10, {1});\n'.format(
+                cp.attrib['component_name'],
+                'zo' if len(outports)>1 else outports[0].attrib['name'],
+                cp.attrib['name'],
+            ))
+    elif len(outports)==0:
+        output.write('\t\tForSyDe::SDF::make_sink("{2}_{0}_leaf", {2}_{0}_leaf_func, {1});\n'.format(
+                cp.attrib['component_name'],
+                'zi' if len(inpports)>1 else inpports[0].attrib['name'],
+                cp.attrib['name'],
+            ))
+    else:
+        output.write('\t\tForSyDe::SDF::make_comb("{5}_{0}_leaf", {5}_{0}_leaf_func, {1}, {2}, {3}, {4});\n'.format(
+                cp.attrib['component_name'],
+                '1' if len(outports)>1 else cp.attrib['otoks'][1:-1],
+                '1' if len(inpports)>1 else cp.attrib['itoks'][1:-1],
+                'zo' if len(outports)>1 else outports[0].attrib['name'],
+                'zi' if len(inpports)>1 else inpports[0].attrib['name'],
+                cp.attrib['name'],
+            ))
 
     if len(outports)>1:
         output.write('\t\tauto unzip1 = new ForSyDe::SDF::unzipN<{}>("unzip1",{});\n'.format(

@@ -11,6 +11,7 @@ To run the flow, in addition to a Python installation you will need
 - [Metis](http://glaros.dtc.umn.edu/gkhome/metis/metis/overview)
 - [PaGrid](https://code.google.com/archive/p/pagrid)
 - [SDF3](http://www.es.ele.tue.nl/sdf3/)
+- [MiniZinc](https://www.minizinc.org/) with the [OR Tools](https://developers.google.com/optimization) solver backend [configured properly](https://www.minizinc.org/doc-2.3.2/en/installation_detailed_linux.html#or-tools).
 - An active MPI installation such as [Open MPI](https://www.open-mpi.org/)
 
 In the simplest case, you can use the `partition-sdf-synthetic.py` script in the `fparsim` directory to run the flow with synthetic benchmarks of different sizes generated with SDF3 using different partitioning algorithms.
